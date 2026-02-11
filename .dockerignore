@@ -1,0 +1,58 @@
+# ============================================================================
+# .dockerignore — Sharpbot
+# Excludes files not needed in the Docker build context
+# ============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE / Editor
+.vs
+.vscode
+.cursor
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build output
+**/bin/
+**/obj/
+**/out/
+**/publish/
+
+# NuGet
+**/packages/
+
+# OS files
+**/Thumbs.db
+**/.DS_Store
+
+# Docker files (avoid recursive builds)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation & images
+*.md
+*.png
+*.jpg
+*.jpeg
+*.gif
+!src/Sharpbot/skills/**/*.md
+!src/Sharpbot/data/workspace/**/*.md
+
+# Environment / secrets
+.env
+.env.*
+**/appsettings.Development.json
+**/appsettings.Local.json
+
+# Test / CI artifacts
+**/TestResults/
+**/coverage/
+
+# Logs
+*.log

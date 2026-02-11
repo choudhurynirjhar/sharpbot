@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐈 Sharpbot</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐈</text></svg>">
+    <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1 class="logo">🐈 Sharpbot</h1>
+                <button class="btn btn-primary btn-sm" id="new-chat-btn" title="New Chat">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    New Chat
+                </button>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-link active" data-tab="chat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    Chat
+                </a>
+                <a href="#" class="nav-link" data-tab="settings">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                    Settings
+                </a>
+                <a href="#" class="nav-link" data-tab="sessions">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    Sessions
+                </a>
+                <a href="#" class="nav-link" data-tab="skills">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                    Skills
+                </a>
+                <a href="#" class="nav-link" data-tab="cron">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    Cron Jobs
+                </a>
+                <a href="#" class="nav-link" data-tab="channels">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    Channels
+                </a>
+                <a href="#" class="nav-link" data-tab="logs">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    Logs
+                </a>
+                <a href="#" class="nav-link" data-tab="usage">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 17v-4"/><path d="M12 17v-8"/><path d="M17 17v-6"/></svg>
+                    Usage
+                </a>
+                <a href="#" class="nav-link" data-tab="status">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    Status
+                </a>
+            </nav>
+
+            <div class="sidebar-sessions" id="sessions-list">
+                <div class="sessions-header">Sessions</div>
+                <!-- Dynamic session list -->
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="btn btn-ghost btn-sm" id="theme-toggle" title="Toggle theme">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                </button>
+                <span class="version-text" id="version-text">v0.2.0</span>
+            </div>
+        </aside>
+
+        <!-- Mobile sidebar toggle -->
+        <button class="sidebar-toggle" id="sidebar-toggle">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+
+        <!-- Main Content -->
+        <main class="content">
+            <!-- Chat Panel -->
+            <div class="panel active" id="panel-chat">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="welcome-message" id="welcome-message">
+                            <div class="welcome-icon">🐈</div>
+                            <h2>Welcome to Sharpbot</h2>
+                            <p>Your personal AI assistant. Type a message below to get started.</p>
+                            <div class="welcome-suggestions">
+                                <button class="suggestion-chip" data-msg="What can you do?">What can you do?</button>
+                                <button class="suggestion-chip" data-msg="Help me write a script">Help me write a script</button>
+                                <button class="suggestion-chip" data-msg="Search the web for today's news">Search the web</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <div class="input-wrapper">
+                            <textarea id="chat-input" placeholder="Type your message..." rows="1" autofocus></textarea>
+                            <button class="send-btn" id="send-btn" title="Send message">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                            </button>
+                        </div>
+                        <div class="input-hint">Press Enter to send, Shift+Enter for new line</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Panel -->
+            <div class="panel" id="panel-settings">
+                <div class="panel-header">
+                    <h2>⚙️ Settings</h2>
+                    <p>Manage your Sharpbot configuration. Changes are saved to the <code>data/appsettings.json</code> file in the application directory.</p>
+                </div>
+                <div class="settings-container" id="settings-container">
+                    <!-- Agent Settings -->
+                    <div class="settings-section">
+                        <h3>Agent Defaults</h3>
+                        <div class="form-group">
+                            <label for="setting-model">Model</label>
+                            <input type="text" id="setting-model" placeholder="e.g. gemini-2.5-flash">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-max-tokens">Max Tokens</label>
+                                <input type="number" id="setting-max-tokens" placeholder="8192">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-temperature">Temperature</label>
+                                <input type="number" id="setting-temperature" step="0.1" min="0" max="2" placeholder="0.7">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-max-iterations">Max Tool Iterations</label>
+                                <input type="number" id="setting-max-iterations" placeholder="20">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Provider API Keys (env vars only) -->
+                    <div class="settings-section">
+                        <h3>LLM Providers</h3>
+                        <p class="section-hint">API keys are loaded from environment variables only. Set <code>SHARPBOT_Providers__&lt;Name&gt;__ApiKey</code> to configure each provider.</p>
+                        <div id="provider-fields">
+                            <!-- Generated dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Tools Settings -->
+                    <div class="settings-section">
+                        <h3>Tools</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Brave Search API Key</label>
+                                <span class="env-var-hint"><code>SHARPBOT_Tools__Web__Search__ApiKey</code></span>
+                                <span id="brave-key-status" class="provider-status"></span>
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-exec-timeout">Shell Exec Timeout (seconds)</label>
+                                <input type="number" id="setting-exec-timeout" placeholder="60">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setting-restrict-workspace">
+                                Restrict file/exec tools to workspace directory
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+                        <button class="btn btn-ghost" id="reload-settings-btn">Reload</button>
+                        <span class="save-status" id="save-status"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skills Panel -->
+            <div class="panel" id="panel-skills">
+                <div class="panel-header">
+                    <h2>📖 Skills</h2>
+                    <p>Browse agent skills loaded from workspace, managed, and built-in directories.</p>
+                </div>
+                <div class="skills-container">
+                    <div class="skills-toolbar">
+                        <div class="skills-search-wrap">
+                            <input type="text" id="skills-search" placeholder="Search skills..." class="skills-search-input">
+                        </div>
+                        <div class="skills-filter-wrap">
+                            <select id="skills-filter">
+                                <option value="all">All</option>
+                                <option value="available">Available</option>
+                                <option value="unavailable">Unavailable</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="refresh-skills-btn">Refresh</button>
+                    </div>
+                    <div class="skills-summary" id="skills-summary"></div>
+                    <div class="skills-list" id="skills-list">
+                        <div class="empty-state">Loading skills...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cron Panel -->
+            <div class="panel" id="panel-cron">
+                <div class="panel-header">
+                    <h2>⏰ Cron Jobs</h2>
+                    <p>Manage scheduled tasks that run automatically.</p>
+                </div>
+                <div class="cron-container">
+                    <div class="cron-actions">
+                        <button class="btn btn-primary btn-sm" id="add-cron-btn">+ Add Job</button>
+                        <button class="btn btn-ghost btn-sm" id="refresh-cron-btn">Refresh</button>
+                    </div>
+
+                    <!-- Add Job Form (hidden by default) -->
+                    <div class="cron-form hidden" id="cron-form">
+                        <h4>New Scheduled Job</h4>
+                        <div class="form-group">
+                            <label for="cron-name">Job Name</label>
+                            <input type="text" id="cron-name" placeholder="e.g. Daily summary">
+                        </div>
+                        <div class="form-group">
+                            <label for="cron-message">Message for Agent</label>
+                            <textarea id="cron-message" rows="2" placeholder="e.g. Summarize today's notes"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="cron-type">Schedule Type</label>
+                                <select id="cron-type">
+                                    <option value="every">Every N seconds</option>
+                                    <option value="cron">Cron expression</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="cron-value">Value</label>
+                                <input type="text" id="cron-value" placeholder="e.g. 3600 or 0 9 * * *">
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn btn-primary btn-sm" id="submit-cron-btn">Add Job</button>
+                            <button class="btn btn-ghost btn-sm" id="cancel-cron-btn">Cancel</button>
+                        </div>
+                    </div>
+
+                    <div class="cron-list" id="cron-list">
+                        <div class="empty-state">Loading cron jobs...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Panel -->
+            <div class="panel" id="panel-logs">
+                <div class="panel-header">
+                    <h2>📋 Logs</h2>
+                    <p>Live view of recent application logs.</p>
+                </div>
+                <div class="logs-container">
+                    <div class="logs-toolbar">
+                        <div class="logs-filters">
+                            <select id="logs-level-filter">
+                                <option value="">All Levels</option>
+                                <option value="info" selected>Info+</option>
+                                <option value="warn">Warning+</option>
+                                <option value="error">Error+</option>
+                            </select>
+                            <input type="text" id="logs-search" placeholder="Search logs..." class="logs-search-input">
+                        </div>
+                        <div class="logs-actions">
+                            <label class="checkbox-label" style="font-size:0.8rem">
+                                <input type="checkbox" id="logs-auto-refresh" checked>
+                                Auto-refresh
+                            </label>
+                            <button class="btn btn-ghost btn-sm" id="refresh-logs-btn">Refresh</button>
+                            <button class="btn btn-danger btn-sm" id="clear-logs-btn">Clear</button>
+                        </div>
+                    </div>
+                    <div class="logs-stats" id="logs-stats"></div>
+                    <div class="logs-output" id="logs-output">
+                        <div class="empty-state">Loading logs...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Channels Panel -->
+            <div class="panel" id="panel-channels">
+                <div class="panel-header">
+                    <h2>📡 Channels</h2>
+                    <p>View the status of messaging channel integrations.</p>
+                </div>
+                <div class="channels-container">
+                    <div class="channels-actions">
+                        <button class="btn btn-ghost btn-sm" id="refresh-channels-btn">Refresh</button>
+                    </div>
+                    <div id="channels-grid" class="channels-grid">
+                        <div class="empty-state">Loading channels...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sessions Panel -->
+            <div class="panel" id="panel-sessions">
+                <div class="panel-header">
+                    <h2>💬 Sessions</h2>
+                    <p>View and manage all conversation sessions.</p>
+                </div>
+                <div class="sessions-container">
+                    <div class="sessions-actions">
+                        <button class="btn btn-ghost btn-sm" id="refresh-sessions-btn">Refresh</button>
+                        <button class="btn btn-danger btn-sm" id="delete-all-sessions-btn">Delete All</button>
+                    </div>
+                    <div class="sessions-table-wrap" id="sessions-table-wrap">
+                        <div class="empty-state">Loading sessions...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Usage Panel -->
+            <div class="panel" id="panel-usage">
+                <div class="panel-header">
+                    <h2>📊 Usage Tracking</h2>
+                    <p>Monitor token consumption, tool usage, and request history.</p>
+                </div>
+                <div class="usage-container">
+                    <div class="usage-filters">
+                        <div class="usage-filters-row">
+                            <div class="usage-quick-btns">
+                                <button class="btn btn-sm usage-quick-btn active" data-period="7d">7d</button>
+                                <button class="btn btn-sm usage-quick-btn" data-period="today">Today</button>
+                                <button class="btn btn-sm usage-quick-btn" data-period="30d">30d</button>
+                                <button class="btn btn-sm usage-quick-btn" data-period="all">All</button>
+                            </div>
+                            <div class="usage-date-range">
+                                <input type="date" id="usage-date-from" class="usage-date-input" title="Start date">
+                                <span class="usage-date-sep">to</span>
+                                <input type="date" id="usage-date-to" class="usage-date-input" title="End date">
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="refresh-usage-btn">Refresh</button>
+                            <div class="export-dropdown" id="export-dropdown">
+                                <button class="btn btn-sm btn-outline" id="export-btn">Export ▾</button>
+                                <div class="export-menu" id="export-menu">
+                                    <button class="export-menu-item" id="export-csv-btn">Export CSV</button>
+                                    <button class="export-menu-item" id="export-json-btn">Export JSON</button>
+                                </div>
+                            </div>
+                            <div class="usage-toolbar-spacer"></div>
+                            <button class="btn btn-danger btn-sm" id="clear-usage-btn">Clear Data</button>
+                        </div>
+                    </div>
+                    <div class="usage-cards" id="usage-cards">
+                        <div class="empty-state">Loading usage data...</div>
+                    </div>
+                    <div class="usage-breakdowns" id="usage-breakdowns"></div>
+                    <div class="usage-heatmaps" id="usage-heatmaps"></div>
+                    <div class="usage-sessions" id="usage-sessions"></div>
+                    <div class="usage-history" id="usage-history"></div>
+                </div>
+            </div>
+
+            <!-- Status Panel -->
+            <div class="panel" id="panel-status">
+                <div class="panel-header">
+                    <h2>📊 System Status</h2>
+                    <p>Overview of Sharpbot configuration and health.</p>
+                </div>
+                <div class="status-container" id="status-container">
+                    <div class="empty-state">Loading status...</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
