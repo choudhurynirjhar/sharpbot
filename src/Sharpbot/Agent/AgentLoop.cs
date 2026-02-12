@@ -44,6 +44,7 @@ public sealed class AgentLoop : IDisposable
     private readonly SubagentManager _subagents;
     private readonly BrowserManager _browserManager;
     private readonly ContextCompactor _compactor;
+    private readonly ProcessSessionManager _processManager;
     private readonly SemanticMemoryStore? _semanticMemory;
     private readonly Action<AgentTelemetry>? _onTelemetry;
     private readonly ILogger? _logger;
@@ -99,6 +100,12 @@ public sealed class AgentLoop : IDisposable
         _browserManager = new BrowserManager(headless: true, logger: logger);
         _compactor = new ContextCompactor(provider, _model, maxTokens: _maxTokens, contextLimitOverride: options.MaxContextTokens, logger: logger);
         _semanticMemory = options.SemanticMemory;
+        _processManager = new ProcessSessionManager(
+            maxOutputChars: _execConfig.MaxOutputChars,
+            backgroundTimeoutSec: _execConfig.BackgroundTimeoutSec,
+            sessionCleanupMs: _execConfig.SessionCleanupMs,
+            defaultWorkDir: _workspace,
+            logger: logger);
 
         RegisterDefaultTools();
     }
@@ -113,8 +120,11 @@ public sealed class AgentLoop : IDisposable
 
         _tools.Register(new ExecTool(
             timeout: _execConfig.Timeout,
+            defaultYieldMs: _execConfig.BackgroundYieldMs,
             workingDir: _workspace,
-            restrictToWorkspace: _restrictToWorkspace));
+            restrictToWorkspace: _restrictToWorkspace,
+            processManager: _processManager));
+        _tools.Register(new ProcessTool(_processManager));
 
         _tools.Register(new WebSearchTool(_braveApiKey));
         _tools.Register(new WebFetchTool());
@@ -949,6 +959,7 @@ public sealed class AgentLoop : IDisposable
     public void Dispose()
     {
         _running = false;
+        _processManager.Dispose();
         _browserManager.Dispose();
     }
 }

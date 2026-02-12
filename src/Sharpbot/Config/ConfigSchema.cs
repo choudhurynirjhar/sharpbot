@@ -168,7 +168,21 @@ public class WebToolsConfig
 /// <summary>Shell exec tool configuration.</summary>
 public class ExecToolConfig
 {
+    /// <summary>Foreground command timeout in seconds (default: 60).</summary>
     public int Timeout { get; set; } = 60;
+
+    /// <summary>Default auto-background yield delay in milliseconds (default: 10000).
+    /// If a foreground command hasn't finished after this delay, it is backgrounded.</summary>
+    public int BackgroundYieldMs { get; set; } = 10_000;
+
+    /// <summary>Maximum time a background process can run before being killed, in seconds (default: 1800 = 30 min).</summary>
+    public int BackgroundTimeoutSec { get; set; } = 1800;
+
+    /// <summary>Maximum output characters buffered per background session (default: 500,000).</summary>
+    public int MaxOutputChars { get; set; } = 500_000;
+
+    /// <summary>TTL for finished background sessions before auto-cleanup, in milliseconds (default: 1,800,000 = 30 min).</summary>
+    public int SessionCleanupMs { get; set; } = 1_800_000;
 }
 
 /// <summary>Tools configuration.</summary>
