@@ -102,6 +102,12 @@ public class AgentDefaults
     /// <summary>Maximum number of session messages to include in LLM context (default: 50).</summary>
     public int MaxSessionMessages { get; set; } = 50;
 
+    /// <summary>
+    /// Override the auto-detected context token limit for compaction (null = auto-detect from model).
+    /// Set to a small value (e.g. 2000) for testing compaction behavior.
+    /// </summary>
+    public int? MaxContextTokens { get; set; }
+
     /// <summary>Per-model parameter overrides keyed by model name or pattern.</summary>
     public Dictionary<string, ModelOverride> ModelOverrides { get; set; } = [];
 }

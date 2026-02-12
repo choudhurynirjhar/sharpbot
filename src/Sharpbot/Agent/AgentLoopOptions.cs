@@ -53,6 +53,13 @@ public sealed record AgentLoopOptions
     /// <summary>Full app config for config-based gating checks.</summary>
     public SharpbotConfig? AppConfig { get; init; }
 
+    /// <summary>
+    /// Override the auto-detected context token limit for compaction.
+    /// If null, the limit is inferred from the model name.
+    /// Useful for testing compaction with a small value.
+    /// </summary>
+    public int? MaxContextTokens { get; init; }
+
     /// <summary>Callback invoked after each message with the completed telemetry. Used for usage tracking.</summary>
     public Action<AgentTelemetry>? OnTelemetry { get; init; }
 }

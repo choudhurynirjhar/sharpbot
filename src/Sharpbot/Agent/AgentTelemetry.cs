@@ -61,6 +61,9 @@ public sealed class AgentTelemetry
     /// <summary>Error message if processing failed.</summary>
     public string? Error { get; set; }
 
+    /// <summary>Number of times context compaction was triggered.</summary>
+    public int CompactionCount { get; private set; }
+
     /// <summary>All LLM calls made during this cycle.</summary>
     public IReadOnlyList<LlmCallTelemetry> LlmCalls => _llmCalls;
 
@@ -72,6 +75,9 @@ public sealed class AgentTelemetry
 
     /// <summary>Record a tool call.</summary>
     public void AddToolCall(ToolCallTelemetry call) => _toolCalls.Add(call);
+
+    /// <summary>Record that context compaction occurred.</summary>
+    public void RecordCompaction() => CompactionCount++;
 
     /// <summary>Stop the timer and mark complete.</summary>
     public void Complete()
@@ -132,6 +138,8 @@ public sealed class AgentTelemetry
         sb.AppendLine($"│ Model:      {Model}");
         sb.AppendLine($"│ Status:     {(Success ? "✓ Success" : $"✗ Failed: {Error}")}");
         sb.AppendLine($"│ Total Time: {FormatDuration(TotalDuration)}");
+        if (CompactionCount > 0)
+            sb.AppendLine($"│ Compactions: {CompactionCount}");
         sb.AppendLine("├─ LLM Calls ──────────────────────────────────────────");
         sb.AppendLine($"│ Iterations:       {Iterations}");
         sb.AppendLine($"│ LLM Time:         {FormatDuration(TotalLlmDuration)}");

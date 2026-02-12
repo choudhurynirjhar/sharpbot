@@ -73,6 +73,9 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
     /// <summary>The channel manager (null if not yet started).</summary>
     public ChannelManager? ChannelManager => _channels;
 
+    /// <summary>The app configuration.</summary>
+    public SharpbotConfig? Config => _config;
+
     /// <summary>When the service started.</summary>
     public DateTime? StartedAt => _startedAt;
 
@@ -108,6 +111,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             Temperature = _config.Agents.Defaults.Temperature,
             ModelOverrides = _config.Agents.Defaults.ModelOverrides,
             MaxSessionMessages = _config.Agents.Defaults.MaxSessionMessages,
+            MaxContextTokens = _config.Agents.Defaults.MaxContextTokens,
             BraveApiKey = string.IsNullOrEmpty(_config.Tools.Web.Search.ApiKey) ? null : _config.Tools.Web.Search.ApiKey,
             ExecConfig = _config.Tools.Exec,
             CronService = _cronService,

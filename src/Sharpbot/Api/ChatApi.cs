@@ -23,6 +23,7 @@ public static class ChatApi
         group.MapPost("/stream", StreamMessage);
         group.MapGet("/sessions", ListSessions);
         group.MapDelete("/sessions/{key}", DeleteSession);
+        group.MapGet("/context-info", GetContextInfo);
     }
 
     /// <summary>Send a message to the agent and get a response.</summary>
@@ -69,6 +70,7 @@ public static class ChatApi
                     PromptTokens = telemetry.TotalPromptTokens,
                     CompletionTokens = telemetry.TotalCompletionTokens,
                     Model = telemetry.Model,
+                    ContextCompactions = telemetry.CompactionCount,
                 },
             });
         }
@@ -154,6 +156,32 @@ public static class ChatApi
         return Results.Json(sessions);
     }
 
+    /// <summary>Get context info (token estimation) for the current or specified session.</summary>
+    private static IResult GetContextInfo(SharpbotHostedService gateway, string? sessionId = null)
+    {
+        var key = sessionId ?? "web:default";
+        var session = gateway.SessionManager.GetOrCreate(key);
+        var messages = session.Messages;
+        var estimatedTokens = Agent.ContextCompactor.EstimateTokens(messages);
+
+        var model = gateway.Config?.Agents.Defaults.Model ?? "unknown";
+        var contextLimit = gateway.Config?.Agents.Defaults.MaxContextTokens
+            ?? Agent.ContextCompactor.GetContextLimit(model);
+        var threshold = (int)(contextLimit * 0.80);
+
+        return Results.Json(new
+        {
+            sessionKey = key,
+            messageCount = messages.Count,
+            estimatedTokens,
+            contextLimit,
+            compactionThreshold = threshold,
+            willCompact = estimatedTokens > threshold,
+            model,
+            headroom = contextLimit - estimatedTokens,
+        });
+    }
+
     /// <summary>Delete a chat session.</summary>
     private static IResult DeleteSession(string key, SharpbotHostedService gateway)
     {
@@ -199,4 +227,5 @@ public record ChatStatsDto
     public int PromptTokens { get; init; }
     public int CompletionTokens { get; init; }
     public string Model { get; init; } = "";
+    public int ContextCompactions { get; init; }
 }

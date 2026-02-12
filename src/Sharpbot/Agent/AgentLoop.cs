@@ -43,6 +43,7 @@ public sealed class AgentLoop : IDisposable
     private readonly ToolRegistry _tools;
     private readonly SubagentManager _subagents;
     private readonly BrowserManager _browserManager;
+    private readonly ContextCompactor _compactor;
     private readonly Action<AgentTelemetry>? _onTelemetry;
     private readonly ILogger? _logger;
     private volatile bool _running;
@@ -88,6 +89,7 @@ public sealed class AgentLoop : IDisposable
             restrictToWorkspace: _restrictToWorkspace,
             logger: logger);
         _browserManager = new BrowserManager(headless: true, logger: logger);
+        _compactor = new ContextCompactor(provider, _model, maxTokens: _maxTokens, contextLimitOverride: options.MaxContextTokens, logger: logger);
 
         RegisterDefaultTools();
     }
@@ -386,6 +388,14 @@ public sealed class AgentLoop : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
+            // ── Context compaction ─────────────────────────────────────
+            var (compactedMessages, wasCompacted) = await _compactor.CompactIfNeededAsync(messages, ct);
+            if (wasCompacted)
+            {
+                messages = compactedMessages;
+                telemetry?.RecordCompaction();
+            }
+
             // ── Log LLM request ──────────────────────────────────────
             _logger?.LogInformation(
                 "┌─ LLM Request (iteration {Iteration}) ─────────────────────\n" +
@@ -647,6 +657,15 @@ public sealed class AgentLoop : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
+            // ── Context compaction ─────────────────────────────────────
+            var (compactedMessages, wasCompacted) = await _compactor.CompactIfNeededAsync(messages, ct);
+            if (wasCompacted)
+            {
+                messages = compactedMessages;
+                telemetry?.RecordCompaction();
+                yield return AgentStreamEvent.Status("Context compacted — summarized older messages to stay within limits", iteration);
+            }
+
             if (iteration > 0)
                 yield return AgentStreamEvent.Status($"Running iteration {iteration + 1}", iteration);
 
@@ -870,6 +889,7 @@ public sealed class AgentLoop : IDisposable
                     PromptTokens = telemetry.TotalPromptTokens,
                     CompletionTokens = telemetry.TotalCompletionTokens,
                     Model = telemetry.Model,
+                    ContextCompactions = telemetry.CompactionCount,
                 });
         }
         finally

@@ -257,7 +257,14 @@ function handleStreamEvent(eventType, data, assistantMsg) {
             break;
 
         case 'status':
-            // Status events (e.g. "Running iteration 2") — could show in UI
+            // Show status events (compaction, iterations) as inline notices
+            if (data.statusMessage) {
+                const isCompaction = data.statusMessage.toLowerCase().includes('compact');
+                const icon = isCompaction ? '🗜️' : 'ℹ️';
+                assistantMsg.content = (assistantMsg.content || '') +
+                    `\n\n> ${icon} *${data.statusMessage}*\n\n`;
+                renderStreamingMessage(assistantMsg);
+            }
             break;
 
         case 'done':
@@ -402,6 +409,7 @@ function createMessageElement(msg) {
         const parts = [`${totalTime}`];
         if (s.iterations > 1) parts.push(`${s.iterations} iterations`);
         if (s.totalTokens > 0) parts.push(`${s.totalTokens.toLocaleString()} tokens`);
+        if (s.contextCompactions > 0) parts.push(`${s.contextCompactions} compaction${s.contextCompactions > 1 ? 's' : ''}`);
         if (s.model) parts.push(s.model);
         statsHtml = `<div class="message-stats">${parts.join(' · ')}</div>`;
     }

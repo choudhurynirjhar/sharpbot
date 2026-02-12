@@ -70,6 +70,7 @@ public sealed class AgentCommand : Command
             Temperature = config.Agents.Defaults.Temperature,
             ModelOverrides = config.Agents.Defaults.ModelOverrides,
             MaxSessionMessages = config.Agents.Defaults.MaxSessionMessages,
+            MaxContextTokens = config.Agents.Defaults.MaxContextTokens,
             BraveApiKey = string.IsNullOrEmpty(config.Tools.Web.Search.ApiKey) ? null : config.Tools.Web.Search.ApiKey,
             ExecConfig = config.Tools.Exec,
             RestrictToWorkspace = config.Tools.RestrictToWorkspace,
