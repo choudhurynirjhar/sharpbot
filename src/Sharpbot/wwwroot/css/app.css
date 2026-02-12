@@ -590,6 +590,37 @@ body {
     30% { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ── Streaming Cursor ─────────────────────────────────────────────────────── */
+.streaming-cursor {
+    display: inline-block;
+    animation: blink 0.8s step-end infinite;
+    color: var(--accent);
+    font-weight: bold;
+    margin-left: 1px;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* ── Running Tool Badge ───────────────────────────────────────────────────── */
+.tool-call-badge.tool-running {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.tool-call-badge.tool-running .tool-call-icon {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 /* ── Chat Input ────────────────────────────────────────────────────────────── */
 .chat-input-area {
     padding: 16px 24px 20px;

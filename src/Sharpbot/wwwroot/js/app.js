@@ -4,6 +4,7 @@
 
 const API = {
     chat: '/api/chat',
+    chatStream: '/api/chat/stream',
     sessions: '/api/chat/sessions',
     status: '/api/status',
     config: '/api/config',
@@ -134,42 +135,213 @@ async function sendMessage() {
     input.value = '';
     input.style.height = 'auto';
 
-    // Show typing indicator
+    // Add a streaming assistant message placeholder
+    const assistantMsg = {
+        role: 'assistant',
+        content: '',
+        toolCalls: [],
+        stats: null,
+        timestamp: null,
+        isStreaming: true,
+    };
+    chatHistory.push(assistantMsg);
+
     isProcessing = true;
     updateSendButton();
-    showTypingIndicator();
+    renderMessages();
+    scrollToBottom();
 
     try {
-        const response = await fetch(API.chat, {
+        const response = await fetch(API.chatStream, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message, sessionId: currentSessionId }),
         });
 
-        const data = await response.json();
-        removeTypingIndicator();
+        if (!response.ok) {
+            // Fallback: try to parse error from response
+            let errorText = 'Server error';
+            try {
+                const errData = await response.json();
+                errorText = errData.message || errData.error || errorText;
+            } catch { errorText = `HTTP ${response.status}`; }
+            assistantMsg.content = `⚠️ ${errorText}`;
+            assistantMsg.isError = true;
+            assistantMsg.isStreaming = false;
+            renderMessages();
+            isProcessing = false;
+            updateSendButton();
+            return;
+        }
 
-        if (data.error) {
-            chatHistory.push({ role: 'assistant', content: `⚠️ ${data.message}`, isError: true });
-        } else {
-            chatHistory.push({
-                role: 'assistant',
-                content: data.message,
-                toolCalls: data.toolCalls || [],
-                stats: data.stats || null,
-                timestamp: data.timestamp,
-            });
-            currentSessionId = data.sessionId || currentSessionId;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse SSE events from buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line in buffer
+
+            let eventType = null;
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ') && eventType) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleStreamEvent(eventType, data, assistantMsg);
+                    } catch (e) {
+                        console.warn('Failed to parse SSE data:', line, e);
+                    }
+                    eventType = null;
+                }
+            }
+        }
+
+        // Mark streaming complete
+        assistantMsg.isStreaming = false;
+        if (!assistantMsg.content) {
+            assistantMsg.content = "I've completed processing but have no response to give.";
         }
     } catch (err) {
-        removeTypingIndicator();
-        chatHistory.push({ role: 'assistant', content: `⚠️ Network error: ${err.message}`, isError: true });
+        assistantMsg.content = (assistantMsg.content || '') + `\n⚠️ Network error: ${err.message}`;
+        assistantMsg.isError = true;
+        assistantMsg.isStreaming = false;
     }
 
     isProcessing = false;
     updateSendButton();
     renderMessages();
     loadSessions(); // refresh session list
+}
+
+function handleStreamEvent(eventType, data, assistantMsg) {
+    switch (eventType) {
+        case 'text_delta':
+            if (data.delta) {
+                assistantMsg.content = (assistantMsg.content || '') + data.delta;
+                renderStreamingMessage(assistantMsg);
+            }
+            break;
+
+        case 'tool_start':
+            assistantMsg.toolCalls.push({
+                name: data.toolName,
+                callId: data.toolCallId,
+                success: true,
+                durationMs: 0,
+                isRunning: true,
+            });
+            renderStreamingMessage(assistantMsg);
+            break;
+
+        case 'tool_end':
+            // Find the matching tool call and update it
+            for (let i = assistantMsg.toolCalls.length - 1; i >= 0; i--) {
+                if (assistantMsg.toolCalls[i].callId === data.toolCallId) {
+                    assistantMsg.toolCalls[i].success = data.toolSuccess !== false;
+                    assistantMsg.toolCalls[i].durationMs = data.toolDurationMs || 0;
+                    assistantMsg.toolCalls[i].error = data.toolError;
+                    assistantMsg.toolCalls[i].resultLength = data.toolResultLength || 0;
+                    assistantMsg.toolCalls[i].isRunning = false;
+                    break;
+                }
+            }
+            renderStreamingMessage(assistantMsg);
+            break;
+
+        case 'status':
+            // Status events (e.g. "Running iteration 2") — could show in UI
+            break;
+
+        case 'done':
+            assistantMsg.content = data.message || assistantMsg.content;
+            assistantMsg.stats = data.stats || null;
+            assistantMsg.sessionId = data.sessionId;
+            assistantMsg.isStreaming = false;
+            if (data.toolCalls && data.toolCalls.length > 0) {
+                assistantMsg.toolCalls = data.toolCalls;
+            }
+            if (data.sessionId) {
+                currentSessionId = data.sessionId;
+            }
+            renderMessages();
+            break;
+
+        case 'error':
+            assistantMsg.content = (assistantMsg.content || '') + `\n⚠️ ${data.error || 'Unknown error'}`;
+            assistantMsg.isError = true;
+            assistantMsg.isStreaming = false;
+            renderMessages();
+            break;
+    }
+}
+
+// Efficiently update just the streaming message without re-rendering everything
+function renderStreamingMessage(msg) {
+    const container = document.getElementById('chat-messages');
+    const messages = container.querySelectorAll('.message');
+    const lastMsg = messages[messages.length - 1];
+
+    if (lastMsg && lastMsg.classList.contains('assistant')) {
+        // Update content in place
+        const contentEl = lastMsg.querySelector('.message-content');
+        if (contentEl) {
+            contentEl.innerHTML = renderMarkdown(msg.content || '') +
+                (msg.isStreaming ? '<span class="streaming-cursor">▊</span>' : '');
+        }
+
+        // Update tool calls
+        const bodyEl = lastMsg.querySelector('.message-body');
+        const existingToolSection = lastMsg.querySelector('.tool-calls-section');
+
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+            const toolBadges = msg.toolCalls.map(tc => {
+                if (tc.isRunning) {
+                    return `
+                        <div class="tool-call-badge tool-running">
+                            <span class="tool-call-icon">⟳</span>
+                            <span class="tool-call-name">${escapeHtml(tc.name)}</span>
+                            <span class="tool-call-duration">running…</span>
+                        </div>
+                    `;
+                }
+                const statusIcon = tc.success ? '✓' : '✗';
+                const statusClass = tc.success ? 'tool-success' : 'tool-error';
+                const duration = formatDuration(tc.durationMs);
+                return `
+                    <div class="tool-call-badge ${statusClass}">
+                        <span class="tool-call-icon">${statusIcon}</span>
+                        <span class="tool-call-name">${escapeHtml(tc.name)}</span>
+                        <span class="tool-call-duration">${duration}</span>
+                    </div>
+                `;
+            }).join('');
+
+            const toolHtml = `<div class="tool-calls-section">${toolBadges}</div>`;
+
+            if (existingToolSection) {
+                existingToolSection.outerHTML = toolHtml;
+            } else {
+                // Insert before message-content
+                const roleEl = bodyEl.querySelector('.message-role');
+                if (roleEl) {
+                    roleEl.insertAdjacentHTML('afterend', toolHtml);
+                }
+            }
+        }
+
+        scrollToBottom();
+    } else {
+        // Fallback: full re-render
+        renderMessages();
+    }
 }
 
 function renderMessages() {
@@ -234,12 +406,15 @@ function createMessageElement(msg) {
         statsHtml = `<div class="message-stats">${parts.join(' · ')}</div>`;
     }
 
+    // Streaming cursor
+    const cursorHtml = msg.isStreaming ? '<span class="streaming-cursor">▊</span>' : '';
+
     div.innerHTML = `
         <div class="message-avatar">${avatar}</div>
         <div class="message-body">
             <div class="message-role">${roleName}</div>
             ${toolCallsHtml}
-            <div class="message-content">${renderMarkdown(msg.content)}</div>
+            <div class="message-content">${renderMarkdown(msg.content)}${cursorHtml}</div>
             ${statsHtml}
         </div>
     `;

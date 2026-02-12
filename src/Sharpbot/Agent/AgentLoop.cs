@@ -630,6 +630,254 @@ public sealed class AgentLoop : IDisposable
             cronTool.SetContext(channel, chatId);
     }
 
+    /// <summary>
+    /// Streaming iterative LLM loop: streams text deltas, tool events, and a final done event.
+    /// Used by the SSE streaming endpoint.
+    /// </summary>
+    internal async IAsyncEnumerable<AgentStreamEvent> RunIterativeLoopStreamingAsync(
+        List<Dictionary<string, object?>> messages,
+        ToolRegistry tools,
+        int? maxIterations = null,
+        AgentTelemetry? telemetry = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var iterations = maxIterations ?? _maxIterations;
+
+        for (int iteration = 0; iteration < iterations; iteration++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (iteration > 0)
+                yield return AgentStreamEvent.Status($"Running iteration {iteration + 1}", iteration);
+
+            _logger?.LogInformation(
+                "┌─ LLM Stream Request (iteration {Iteration}) ─────────────\n" +
+                "│ Model: {Model} | Messages: {Count}\n" +
+                "└───────────────────────────────────────────────────────",
+                iteration + 1, _model, messages.Count);
+
+            var effectiveTemp = ResolveTemperature(_model);
+            var effectiveMaxTokens = ResolveMaxTokens(_model);
+            var llmSw = Stopwatch.StartNew();
+
+            // Stream the LLM response
+            Providers.LlmResponse? llmResponse = null;
+
+            await foreach (var chunk in _provider.ChatStreamAsync(
+                messages: messages,
+                tools: tools.GetDefinitions(),
+                model: _model,
+                maxTokens: effectiveMaxTokens,
+                temperature: effectiveTemp,
+                ct: ct))
+            {
+                if (chunk.Type == "text_delta" && chunk.Delta != null)
+                {
+                    yield return AgentStreamEvent.TextDelta(chunk.Delta);
+                }
+                else if (chunk.Type == "done" && chunk.Response != null)
+                {
+                    llmResponse = chunk.Response;
+                }
+            }
+
+            llmSw.Stop();
+
+            if (llmResponse == null)
+            {
+                yield return AgentStreamEvent.Failed("No response from LLM");
+                yield break;
+            }
+
+            // Record OTel metrics
+            SharpbotInstrumentation.LlmDuration.Record(llmSw.Elapsed.TotalMilliseconds,
+                new KeyValuePair<string, object?>("model", _model));
+            SharpbotInstrumentation.PromptTokens.Add(llmResponse.Usage.GetValueOrDefault("prompt_tokens"),
+                new KeyValuePair<string, object?>("model", _model));
+            SharpbotInstrumentation.CompletionTokens.Add(llmResponse.Usage.GetValueOrDefault("completion_tokens"),
+                new KeyValuePair<string, object?>("model", _model));
+
+            // Record telemetry
+            telemetry?.AddLlmCall(new LlmCallTelemetry
+            {
+                Model = _model,
+                Iteration = iteration,
+                Duration = llmSw.Elapsed,
+                PromptTokens = llmResponse.Usage.GetValueOrDefault("prompt_tokens"),
+                CompletionTokens = llmResponse.Usage.GetValueOrDefault("completion_tokens"),
+                TotalTokens = llmResponse.Usage.GetValueOrDefault("total_tokens"),
+                FinishReason = llmResponse.FinishReason,
+                HasToolCalls = llmResponse.HasToolCalls,
+                ToolCallCount = llmResponse.ToolCalls.Count,
+            });
+
+            // If no tool calls, we're done — the text was already streamed
+            if (!llmResponse.HasToolCalls)
+                yield break;
+
+            // There are tool calls — execute them
+            var toolCallDicts = llmResponse.ToolCalls.Select(tc => new Dictionary<string, object?>
+            {
+                ["id"] = tc.Id,
+                ["type"] = "function",
+                ["function"] = new Dictionary<string, object?>
+                {
+                    ["name"] = tc.Name,
+                    ["arguments"] = JsonSerializer.Serialize(tc.Arguments),
+                },
+            }).ToList();
+
+            messages = _context.AddAssistantMessage(messages, llmResponse.Content, toolCallDicts);
+
+            foreach (var toolCall in llmResponse.ToolCalls)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                yield return AgentStreamEvent.ToolStart(toolCall.Name, toolCall.Id);
+
+                var toolSw = Stopwatch.StartNew();
+                string result;
+                bool success = true;
+                string? error = null;
+                try
+                {
+                    result = await tools.ExecuteAsync(toolCall.Name, toolCall.Arguments);
+                }
+                catch (Exception ex)
+                {
+                    result = $"Error: {ex.Message}";
+                    success = false;
+                    error = ex.Message;
+                }
+                toolSw.Stop();
+
+                // Record OTel + telemetry
+                SharpbotInstrumentation.ToolCallsTotal.Add(1,
+                    new KeyValuePair<string, object?>("tool", toolCall.Name));
+                if (!success)
+                    SharpbotInstrumentation.ToolCallsFailed.Add(1,
+                        new KeyValuePair<string, object?>("tool", toolCall.Name));
+
+                telemetry?.AddToolCall(new ToolCallTelemetry
+                {
+                    Name = toolCall.Name,
+                    CallId = toolCall.Id,
+                    Iteration = iteration,
+                    Duration = toolSw.Elapsed,
+                    Success = success,
+                    Error = error,
+                    ResultLength = result.Length,
+                });
+
+                yield return AgentStreamEvent.ToolEnd(
+                    toolCall.Name, toolCall.Id, success,
+                    (int)toolSw.Elapsed.TotalMilliseconds, error, result.Length);
+
+                messages = _context.AddToolResult(messages, toolCall.Id, toolCall.Name, result);
+            }
+
+            // Continue to next iteration (LLM will be called again with tool results)
+        }
+    }
+
+    /// <summary>Process a message directly with streaming. Used by the SSE chat endpoint.</summary>
+    public async IAsyncEnumerable<AgentStreamEvent> ProcessDirectStreamingAsync(
+        string content,
+        string? sessionKey = null,
+        string channel = Channels.WellKnown.Cli,
+        string chatId = Channels.WellKnown.Direct,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var msg = new InboundMessage
+        {
+            Channel = channel,
+            SenderId = MessageRoles.User,
+            ChatId = chatId,
+            Content = content,
+        };
+
+        var effectiveSessionKey = sessionKey ?? $"{channel}:{chatId}";
+
+        var telemetry = new AgentTelemetry
+        {
+            Channel = msg.Channel,
+            SenderId = msg.SenderId,
+            SessionKey = effectiveSessionKey,
+            Model = _model,
+        };
+
+        // Inject per-skill environment variables
+        var restoreEnv = _skills.InjectSkillEnvironment();
+        try
+        {
+            var session = _sessions.GetOrCreate(effectiveSessionKey);
+            SetToolContexts(msg.Channel, msg.ChatId);
+
+            var messages = _context.BuildMessages(
+                history: session.GetHistory(_maxSessionMessages),
+                currentMessage: msg.Content,
+                channel: msg.Channel,
+                chatId: msg.ChatId);
+
+            // Stream the iterative loop
+            var fullContent = new System.Text.StringBuilder();
+
+            await foreach (var evt in RunIterativeLoopStreamingAsync(messages, _tools, telemetry: telemetry, ct: ct))
+            {
+                // Accumulate text for session saving
+                if (evt.Type == "text_delta" && evt.Delta != null)
+                    fullContent.Append(evt.Delta);
+
+                yield return evt;
+            }
+
+            // Save to session
+            var finalContent = fullContent.Length > 0 ? fullContent.ToString() : "I've completed processing but have no response to give.";
+            session.AddMessage(MessageRoles.User, msg.Content);
+            session.AddMessage(MessageRoles.Assistant, finalContent);
+            _sessions.Save(session);
+
+            telemetry.Complete();
+            _logger?.LogInformation("Agent telemetry (streaming):\n{Telemetry}", telemetry.ToLogString());
+            SafeInvokeTelemetry(telemetry);
+
+            // Record OTel metrics
+            SharpbotInstrumentation.RequestsTotal.Add(1,
+                new KeyValuePair<string, object?>("channel", msg.Channel));
+            SharpbotInstrumentation.RequestsSuccess.Add(1,
+                new KeyValuePair<string, object?>("channel", msg.Channel));
+            SharpbotInstrumentation.RequestDuration.Record(telemetry.TotalDuration.TotalMilliseconds,
+                new KeyValuePair<string, object?>("channel", msg.Channel));
+
+            // Emit final done event with stats
+            yield return AgentStreamEvent.Completed(
+                message: finalContent,
+                sessionId: effectiveSessionKey,
+                toolCalls: telemetry.ToolCalls.Select(tc => new Api.ToolCallDto
+                {
+                    Name = tc.Name,
+                    DurationMs = (int)tc.Duration.TotalMilliseconds,
+                    Success = tc.Success,
+                    Error = tc.Error,
+                    ResultLength = tc.ResultLength,
+                    Iteration = tc.Iteration,
+                }).ToList(),
+                stats: new Api.ChatStatsDto
+                {
+                    TotalDurationMs = (int)telemetry.TotalDuration.TotalMilliseconds,
+                    Iterations = telemetry.Iterations,
+                    TotalTokens = telemetry.TotalTokens,
+                    PromptTokens = telemetry.TotalPromptTokens,
+                    CompletionTokens = telemetry.TotalCompletionTokens,
+                    Model = telemetry.Model,
+                });
+        }
+        finally
+        {
+            restoreEnv();
+        }
+    }
+
     /// <summary>Process a message directly (for CLI or cron usage).</summary>
     public async Task<string> ProcessDirectAsync(
         string content,

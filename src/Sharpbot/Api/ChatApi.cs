@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Sharpbot.Agent;
 using Sharpbot.Channels;
 using Sharpbot.Services;
@@ -7,11 +9,18 @@ namespace Sharpbot.Api;
 /// <summary>Chat API — send messages and manage sessions.</summary>
 public static class ChatApi
 {
+    private static readonly JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     public static void MapChatApi(this WebApplication app)
     {
         var group = app.MapGroup("/api/chat").WithTags("Chat");
 
         group.MapPost("/", SendMessage);
+        group.MapPost("/stream", StreamMessage);
         group.MapGet("/sessions", ListSessions);
         group.MapDelete("/sessions/{key}", DeleteSession);
     }
@@ -71,6 +80,71 @@ public static class ChatApi
                 message = $"Error processing message: {ex.Message}",
             }, statusCode: 500);
         }
+    }
+
+    /// <summary>Send a message and stream the response as Server-Sent Events.</summary>
+    private static async Task StreamMessage(ChatRequest request, SharpbotHostedService gateway, HttpContext httpContext)
+    {
+        var response = httpContext.Response;
+
+        if (!gateway.IsReady || gateway.Agent is null)
+        {
+            response.StatusCode = 503;
+            response.ContentType = "text/event-stream";
+            await response.StartAsync();
+            await WriteSseEvent(response, "error", new { error = gateway.Error ?? "Agent is not ready. Please configure an API key in Settings." });
+            await response.Body.FlushAsync();
+            return;
+        }
+
+        var sessionKey = request.SessionId ?? "web:default";
+
+        response.StatusCode = 200;
+        response.ContentType = "text/event-stream";
+        response.Headers.CacheControl = "no-cache";
+        response.Headers.Connection = "keep-alive";
+        response.Headers["X-Accel-Buffering"] = "no"; // Disable nginx buffering
+        await response.StartAsync();
+
+        var ct = httpContext.RequestAborted;
+
+        try
+        {
+            await foreach (var evt in gateway.Agent.ProcessDirectStreamingAsync(
+                content: request.Message,
+                sessionKey: sessionKey,
+                channel: "web",
+                chatId: request.SessionId ?? "default",
+                ct: ct))
+            {
+                await WriteSseEvent(response, evt.Type, evt);
+                await response.Body.FlushAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client disconnected — that's fine
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                await WriteSseEvent(response, "error", new { error = ex.Message });
+                await response.Body.FlushAsync();
+            }
+            catch
+            {
+                // Response may already be completed
+            }
+        }
+    }
+
+    /// <summary>Write a single SSE event to the response stream.</summary>
+    private static async Task WriteSseEvent(HttpResponse response, string eventType, object data)
+    {
+        var json = JsonSerializer.Serialize(data, SseJsonOptions);
+        var payload = $"event: {eventType}\ndata: {json}\n\n";
+        await response.WriteAsync(payload);
     }
 
     /// <summary>List all chat sessions.</summary>

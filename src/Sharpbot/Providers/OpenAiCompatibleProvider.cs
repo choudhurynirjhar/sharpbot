@@ -1,5 +1,7 @@
 using System.ClientModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using OpenAI;
@@ -136,6 +138,172 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
                 FinishReason = "error",
             };
         }
+    }
+
+    public async IAsyncEnumerable<StreamChunk> ChatStreamAsync(
+        List<Dictionary<string, object?>> messages,
+        List<Dictionary<string, object?>>? tools = null,
+        string? model = null,
+        int maxTokens = 4096,
+        double temperature = 0.7,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        using var activity = SharpbotInstrumentation.ActivitySource.StartActivity("llm.http_request_stream");
+        LlmResponse? finalResponse = null;
+
+        var chatMessages = ConvertMessages(messages);
+        var options = new ChatCompletionOptions
+        {
+            MaxOutputTokenCount = maxTokens,
+            Temperature = (float)temperature,
+        };
+
+        if (tools != null)
+        {
+            foreach (var toolDef in tools)
+            {
+                var chatTool = ConvertTool(toolDef);
+                if (chatTool != null)
+                    options.Tools.Add(chatTool);
+            }
+            options.ToolChoice = ChatToolChoice.CreateAutoChoice();
+        }
+
+        var resolvedModel = model ?? _defaultModel;
+        activity?.SetTag("llm.model", resolvedModel);
+        activity?.SetTag("llm.streaming", true);
+
+        _logger?.LogInformation(
+            "┌─ LLM Stream Request ───────────────────────────────\n" +
+            "│ Model: {Model}\n" +
+            "│ Messages: {MsgCount} | Streaming: true\n" +
+            "└───────────────────────────────────────────────────────",
+            resolvedModel, messages.Count);
+
+        var sw = Stopwatch.StartNew();
+
+        AsyncCollectionResult<StreamingChatCompletionUpdate>? stream = null;
+        LlmResponse? errorResponse = null;
+
+        try
+        {
+            stream = _client.CompleteChatStreamingAsync(chatMessages, options, ct);
+        }
+        catch (Exception e)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, e.Message);
+            _logger?.LogError(e, "Error starting LLM stream");
+            errorResponse = new LlmResponse
+            {
+                Content = $"Error calling LLM: {e.Message}",
+                FinishReason = "error",
+            };
+        }
+
+        // If error occurred during setup, emit error and stop
+        if (errorResponse != null)
+        {
+            yield return StreamChunk.Done(errorResponse);
+            yield break;
+        }
+
+        // Accumulate the full response from streaming chunks
+        var contentBuilder = new StringBuilder();
+        var toolCallBuilders = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
+        string? finishReason = null;
+        Dictionary<string, int>? usage = null;
+
+        await foreach (var update in stream!.WithCancellation(ct))
+        {
+            // Text content deltas
+            foreach (var part in update.ContentUpdate)
+            {
+                if (part.Kind == ChatMessageContentPartKind.Text && !string.IsNullOrEmpty(part.Text))
+                {
+                    contentBuilder.Append(part.Text);
+                    yield return StreamChunk.TextDelta(part.Text);
+                }
+            }
+
+            // Tool call deltas — accumulate across updates
+            foreach (var tcUpdate in update.ToolCallUpdates)
+            {
+                if (!toolCallBuilders.TryGetValue(tcUpdate.Index, out var builder2))
+                {
+                    builder2 = (tcUpdate.ToolCallId ?? "", tcUpdate.FunctionName ?? "", new StringBuilder());
+                    toolCallBuilders[tcUpdate.Index] = builder2;
+                }
+                else
+                {
+                    // Update id and name if they arrive in a later chunk
+                    if (!string.IsNullOrEmpty(tcUpdate.ToolCallId))
+                        builder2.Id = tcUpdate.ToolCallId;
+                    if (!string.IsNullOrEmpty(tcUpdate.FunctionName))
+                        builder2.Name = tcUpdate.FunctionName;
+                    toolCallBuilders[tcUpdate.Index] = builder2;
+                }
+
+                var argsUpdate = tcUpdate.FunctionArgumentsUpdate?.ToString();
+                if (!string.IsNullOrEmpty(argsUpdate))
+                    toolCallBuilders[tcUpdate.Index].Args.Append(argsUpdate);
+            }
+
+            if (update.FinishReason.HasValue)
+                finishReason = update.FinishReason.Value.ToString();
+
+            if (update.Usage != null)
+            {
+                usage = new Dictionary<string, int>
+                {
+                    ["prompt_tokens"] = update.Usage.InputTokenCount,
+                    ["completion_tokens"] = update.Usage.OutputTokenCount,
+                    ["total_tokens"] = update.Usage.TotalTokenCount,
+                };
+            }
+        }
+
+        sw.Stop();
+
+        // Build final tool calls list
+        var toolCalls = new List<ToolCallRequest>();
+        foreach (var (_, (id, name, argsBuilder)) in toolCallBuilders.OrderBy(kv => kv.Key))
+        {
+            Dictionary<string, object?> args;
+            try
+            {
+                args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsBuilder.ToString()) ?? [];
+            }
+            catch
+            {
+                args = new() { ["raw"] = argsBuilder.ToString() };
+            }
+            toolCalls.Add(new ToolCallRequest(id, name, args));
+        }
+
+        finalResponse = new LlmResponse
+        {
+            Content = contentBuilder.Length > 0 ? contentBuilder.ToString() : null,
+            ToolCalls = toolCalls,
+            FinishReason = finishReason ?? "stop",
+            Usage = usage ?? new Dictionary<string, int>(),
+        };
+
+        activity?.SetTag("llm.finish_reason", finalResponse.FinishReason);
+        activity?.SetTag("llm.tool_calls", finalResponse.ToolCalls.Count);
+        activity?.SetTag("llm.duration_ms", sw.Elapsed.TotalMilliseconds);
+
+        _logger?.LogInformation(
+            "┌─ LLM Stream Complete ({Duration}) ──────────────────\n" +
+            "│ Finish: {FinishReason}\n" +
+            "│ Tool calls: {ToolCalls}\n" +
+            "│ Content length: {ContentLen} chars\n" +
+            "└───────────────────────────────────────────────────────",
+            FormatDuration(sw.Elapsed),
+            finalResponse.FinishReason,
+            finalResponse.ToolCalls.Count,
+            finalResponse.Content?.Length ?? 0);
+
+        yield return StreamChunk.Done(finalResponse);
     }
 
     public string GetDefaultModel() => _defaultModel;

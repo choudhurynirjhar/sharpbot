@@ -33,6 +33,15 @@ public interface ILlmProvider
         double temperature = 0.7,
         CancellationToken ct = default);
 
+    /// <summary>Send a streaming chat completion request. Yields text deltas followed by a final "done" chunk.</summary>
+    IAsyncEnumerable<StreamChunk> ChatStreamAsync(
+        List<Dictionary<string, object?>> messages,
+        List<Dictionary<string, object?>>? tools = null,
+        string? model = null,
+        int maxTokens = 4096,
+        double temperature = 0.7,
+        CancellationToken ct = default);
+
     /// <summary>Get the default model for this provider.</summary>
     string GetDefaultModel();
 }
