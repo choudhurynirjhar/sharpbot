@@ -141,6 +141,7 @@ app.MapChannelsApi();
 app.MapSkillsApi();
 app.MapLogsApi();
 app.MapUsageApi();
+app.MapMemoryApi();
 app.MapSlackEventsApi();
 
 // ── Root redirect ───────────────────────────────────────────────────────────

@@ -42,6 +42,12 @@ public interface ILlmProvider
         double temperature = 0.7,
         CancellationToken ct = default);
 
+    /// <summary>Generate an embedding vector for the given text.</summary>
+    Task<float[]> EmbedAsync(
+        string text,
+        string? model = null,
+        CancellationToken ct = default);
+
     /// <summary>Get the default model for this provider.</summary>
     string GetDefaultModel();
 }

@@ -79,19 +79,17 @@ public sealed class MemoryStore
             .ToList();
     }
 
-    /// <summary>Get memory context for the agent.</summary>
+    /// <summary>
+    /// Get memory context for the agent.
+    /// Only loads MEMORY.md (pinned facts) — daily notes are no longer injected
+    /// into context since semantic memory handles per-message retrieval.
+    /// </summary>
     public string GetMemoryContext()
     {
-        var parts = new List<string>();
-
         var longTerm = ReadLongTerm();
         if (!string.IsNullOrEmpty(longTerm))
-            parts.Add($"## Long-term Memory\n{longTerm}");
+            return $"## Pinned Notes\n{longTerm}";
 
-        var today = ReadToday();
-        if (!string.IsNullOrEmpty(today))
-            parts.Add($"## Today's Notes\n{today}");
-
-        return string.Join("\n\n", parts);
+        return "";
     }
 }

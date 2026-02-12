@@ -44,11 +44,33 @@ public static class SharpbotServiceFactory
 
         var apiBase = config.GetApiBase();
 
+        // Resolve embedding provider (may be different from the chat provider)
+        var smConfig = config.SemanticMemory;
+        string? embeddingApiKey = null;
+        string? embeddingApiBase = null;
+        if (smConfig.Enabled)
+        {
+            // Honor explicit overrides first
+            embeddingApiKey = string.IsNullOrEmpty(smConfig.EmbeddingApiKey) ? null : smConfig.EmbeddingApiKey;
+            embeddingApiBase = string.IsNullOrEmpty(smConfig.EmbeddingApiBase) ? null : smConfig.EmbeddingApiBase;
+
+            // If the chat provider supports embeddings (same endpoint), use it directly
+            // In this case, embeddingApiBase stays null so the main client is reused
+            if (embeddingApiKey == null && embeddingApiBase == null)
+            {
+                // The chat provider's endpoint works for embeddings too, just pass the key
+                embeddingApiKey = provider?.ApiKey;
+                // embeddingApiBase stays null = reuse main client
+            }
+        }
+
         return new OpenAiCompatibleProvider(
             apiKey: provider?.ApiKey,
             apiBase: apiBase,
             defaultModel: model,
             extraHeaders: provider?.ExtraHeaders,
+            embeddingApiKey: embeddingApiKey,
+            embeddingApiBase: embeddingApiBase,
             logger: logger);
     }
 

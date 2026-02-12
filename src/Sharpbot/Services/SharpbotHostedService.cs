@@ -22,11 +22,13 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
     private readonly MessageBus _bus;
     private readonly SessionManager _sessionManager;
     private readonly CronService _cronService;
+    private readonly Database.SharpbotDb _db;
     private readonly ILogger<SharpbotHostedService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly UsageStore _usageStore;
 
     private AgentLoop? _agentLoop;
+    private Sharpbot.Agent.SemanticMemoryStore? _semanticMemory;
     private HeartbeatService? _heartbeat;
     private ChannelManager? _channels;
     private CancellationTokenSource? _cts;
@@ -42,6 +44,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         MessageBus bus,
         SessionManager sessionManager,
         CronService cronService,
+        Database.SharpbotDb db,
         UsageStore usageStore,
         ILogger<SharpbotHostedService> logger,
         ILoggerFactory loggerFactory)
@@ -50,6 +53,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         _bus = bus;
         _sessionManager = sessionManager;
         _cronService = cronService;
+        _db = db;
         _usageStore = usageStore;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -75,6 +79,9 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
 
     /// <summary>The app configuration.</summary>
     public SharpbotConfig? Config => _config;
+
+    /// <summary>The semantic memory store (null if disabled or not yet initialised).</summary>
+    public Sharpbot.Agent.SemanticMemoryStore? SemanticMemory => _semanticMemory;
 
     /// <summary>When the service started.</summary>
     public DateTime? StartedAt => _startedAt;
@@ -102,6 +109,22 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
 
         var agentLogger = _loggerFactory.CreateLogger("agent");
 
+        // Create semantic memory store if enabled
+        var smConfig = _config.SemanticMemory;
+        Sharpbot.Agent.SemanticMemoryStore? semanticMemory = null;
+        if (smConfig.Enabled)
+        {
+            var smLogger = _loggerFactory.CreateLogger("semantic-memory");
+            var embeddingModel = Sharpbot.Agent.EmbeddingModelResolver.Resolve(smConfig.EmbeddingModel, _config.Agents.Defaults.Model);
+            semanticMemory = new Sharpbot.Agent.SemanticMemoryStore(
+                _db, provider,
+                embeddingModel,
+                smLogger);
+            _logger.LogInformation("Semantic memory enabled (model: {Model}, autoEnrich: {AutoEnrich})",
+                embeddingModel, smConfig.AutoEnrich);
+            _semanticMemory = semanticMemory;
+        }
+
         _agentLoop = new AgentLoop(_bus, provider, new AgentLoopOptions
         {
             Workspace = _config.WorkspacePath,
@@ -119,6 +142,10 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             SessionManager = _sessionManager,
             SkillsConfig = _config.Skills,
             AppConfig = _config,
+            SemanticMemory = semanticMemory,
+            SemanticMemoryAutoEnrich = smConfig.AutoEnrich,
+            SemanticMemoryAutoEnrichTopK = smConfig.AutoEnrichTopK,
+            SemanticMemoryAutoEnrichMinScore = smConfig.MinScore,
             OnTelemetry = telemetry => _usageStore.Record(telemetry),
         }, agentLogger);
 
@@ -290,21 +317,19 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         if (File.Exists(memoryFile)) return;
 
         File.WriteAllText(memoryFile, """
-            # Long-term Memory
+            # Pinned Notes
 
-            This file stores important information that should persist across sessions.
+            This file contains always-visible facts that are injected into every conversation.
+            Keep it small — only core identity and critical preferences belong here.
+            For everything else, use `memory_index` / `memory_search` (semantic memory).
 
             ## User Information
 
-            (Important facts about the user)
+            (Your name, role, or identity)
 
-            ## Preferences
+            ## Core Preferences
 
-            (User preferences learned over time)
-
-            ## Important Notes
-
-            (Things to remember)
+            (Always-needed preferences like timezone, language, communication style)
             """);
     }
 

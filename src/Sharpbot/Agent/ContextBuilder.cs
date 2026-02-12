@@ -15,13 +15,29 @@ public sealed class ContextBuilder
     private readonly string _workspace;
     private readonly MemoryStore _memory;
     private readonly SkillsLoader _skills;
+    private readonly SemanticMemoryStore? _semanticMemory;
+    private readonly bool _autoEnrich;
+    private readonly int _autoEnrichTopK;
+    private readonly float _autoEnrichMinScore;
     private readonly ILogger? _logger;
 
-    public ContextBuilder(string workspace, MemoryStore? memory = null, SkillsLoader? skills = null, ILogger? logger = null)
+    public ContextBuilder(
+        string workspace,
+        MemoryStore? memory = null,
+        SkillsLoader? skills = null,
+        SemanticMemoryStore? semanticMemory = null,
+        bool autoEnrich = true,
+        int autoEnrichTopK = 3,
+        float autoEnrichMinScore = 0.5f,
+        ILogger? logger = null)
     {
         _workspace = workspace;
         _memory = memory ?? new MemoryStore(workspace);
         _skills = skills ?? new SkillsLoader(workspace);
+        _semanticMemory = semanticMemory;
+        _autoEnrich = autoEnrich;
+        _autoEnrichTopK = autoEnrichTopK;
+        _autoEnrichMinScore = autoEnrichMinScore;
         _logger = logger;
     }
 
@@ -143,6 +159,31 @@ public sealed class ContextBuilder
                      RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Windows" : "Linux";
         var runtime = $"{osName} {RuntimeInformation.OSArchitecture}, .NET {Environment.Version}";
 
+        var hasSemanticMemory = _semanticMemory != null;
+        var memoryInstructions = hasSemanticMemory
+            ? """
+            ## Memory
+
+            You have two memory systems:
+
+            1. **Semantic memory** (primary) — Use the `memory_index` tool to store important facts,
+               user preferences, or key information. Use `memory_search` to recall past information.
+               Semantic memory is searchable by meaning and persists across sessions.
+
+            2. **Pinned notes** — The file `memory/MEMORY.md` in your workspace contains a small set of
+               always-visible facts (user identity, core preferences). Only edit this file for
+               critical, always-needed information. For everything else, use semantic memory.
+
+            When the user asks you to remember something, ALWAYS use `memory_index` (not file writes).
+            When you need to recall something, ALWAYS try `memory_search` first.
+            """
+            : $"""
+            ## Memory
+
+            When remembering something, write to {workspacePath}/memory/MEMORY.md
+            Daily notes can be written to {workspacePath}/memory/YYYY-MM-DD.md
+            """;
+
         return $"""
             # sharpbot 🐈
 
@@ -153,6 +194,7 @@ public sealed class ContextBuilder
             - Make HTTP API requests (GET, POST, PUT, PATCH, DELETE) with custom headers, body, and authentication
             - Send messages to users on chat channels
             - Spawn subagents for complex background tasks
+            - Search and store information in semantic memory
 
             ## Current Time
             {now}
@@ -162,9 +204,10 @@ public sealed class ContextBuilder
 
             ## Workspace
             Your workspace is at: {workspacePath}
-            - Memory files: {workspacePath}/memory/MEMORY.md
-            - Daily notes: {workspacePath}/memory/YYYY-MM-DD.md
+            - Pinned notes: {workspacePath}/memory/MEMORY.md
             - Custom skills: {workspacePath}/skills/<skill-name>/SKILL.md
+
+            {memoryInstructions}
 
             ## Skills
             Skills are markdown files (SKILL.md) that teach you how to perform specific tasks like calling APIs.
@@ -176,7 +219,6 @@ public sealed class ContextBuilder
             For normal conversation, just respond with text - do not call the message tool.
 
             Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-            When remembering something, write to {workspacePath}/memory/MEMORY.md
             """;
     }
 
@@ -195,19 +237,41 @@ public sealed class ContextBuilder
         return string.Join("\n\n", parts);
     }
 
-    /// <summary>Build the complete message list for an LLM call.</summary>
-    public List<Dictionary<string, object?>> BuildMessages(
+    /// <summary>Build the complete message list for an LLM call (async for semantic memory enrichment).</summary>
+    public async Task<List<Dictionary<string, object?>>> BuildMessagesAsync(
         List<Dictionary<string, object?>> history,
         string currentMessage,
         List<string>? skillNames = null,
         List<string>? media = null,
         string? channel = null,
-        string? chatId = null)
+        string? chatId = null,
+        CancellationToken ct = default)
     {
         var messages = new List<Dictionary<string, object?>>();
 
         // System prompt
         var systemPrompt = BuildSystemPrompt(skillNames);
+
+        // Semantic memory auto-enrichment
+        if (_autoEnrich && _semanticMemory != null && !string.IsNullOrWhiteSpace(currentMessage))
+        {
+            try
+            {
+                var results = await _semanticMemory.SearchAsync(currentMessage, _autoEnrichTopK, _autoEnrichMinScore, ct);
+                if (results.Count > 0)
+                {
+                    var memoryLines = results.Select(r =>
+                        $"- [{r.Score:F2}] ({r.Source}) {r.Content}");
+                    systemPrompt += $"\n\n---\n\n# Relevant Memories\n\n{string.Join("\n", memoryLines)}";
+                    _logger?.LogInformation("Semantic memory enrichment: injected {Count} relevant memories into system prompt", results.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to enrich context with semantic memories");
+            }
+        }
+
         if (channel != null && chatId != null)
             systemPrompt += $"\n\n## Current Session\nChannel: {channel}\nChat ID: {chatId}";
 

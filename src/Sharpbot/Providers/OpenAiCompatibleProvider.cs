@@ -16,21 +16,32 @@ namespace Sharpbot.Providers;
 /// </summary>
 public sealed class OpenAiCompatibleProvider : ILlmProvider
 {
+    private readonly OpenAIClient _openAiClient;
     private readonly ChatClient _client;
     private readonly string _defaultModel;
     private readonly ProviderSpec? _gateway;
     private readonly ILogger? _logger;
+
+    // Separate embedding client configuration (may use different endpoint/key than chat)
+    private readonly string? _embeddingApiKey;
+    private readonly string? _embeddingApiBase;
+    private OpenAI.Embeddings.EmbeddingClient? _embeddingClient;
+    private string? _embeddingClientModel;
 
     public OpenAiCompatibleProvider(
         string? apiKey = null,
         string? apiBase = null,
         string defaultModel = "anthropic/claude-opus-4-5",
         Dictionary<string, string>? extraHeaders = null,
+        string? embeddingApiKey = null,
+        string? embeddingApiBase = null,
         ILogger? logger = null)
     {
         _defaultModel = defaultModel;
         _logger = logger;
         _gateway = ProviderRegistry.FindGateway(apiKey, apiBase);
+        _embeddingApiKey = embeddingApiKey ?? apiKey;
+        _embeddingApiBase = embeddingApiBase;
 
         var resolvedModel = ResolveModel(defaultModel);
 
@@ -48,8 +59,8 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
         }
 
         var credential = new ApiKeyCredential(apiKey ?? "no-key");
-        var openAiClient = new OpenAIClient(credential, options);
-        _client = openAiClient.GetChatClient(resolvedModel);
+        _openAiClient = new OpenAIClient(credential, options);
+        _client = _openAiClient.GetChatClient(resolvedModel);
     }
 
     public async Task<LlmResponse> ChatAsync(
@@ -304,6 +315,110 @@ public sealed class OpenAiCompatibleProvider : ILlmProvider
             finalResponse.Content?.Length ?? 0);
 
         yield return StreamChunk.Done(finalResponse);
+    }
+
+    public async Task<float[]> EmbedAsync(string text, string? model = null, CancellationToken ct = default)
+    {
+        var embeddingModel = model ?? "text-embedding-3-small";
+        _logger?.LogInformation("Embedding request: model={Model}, text length={Length}", embeddingModel, text.Length);
+
+        float[] vector;
+
+        // Detect Gemini provider by checking if the endpoint or gateway is Google's API
+        if (IsGeminiProvider())
+        {
+            vector = await EmbedViaGeminiNativeAsync(text, embeddingModel, ct);
+        }
+        else
+        {
+            var embeddingClient = GetOrCreateEmbeddingClient(embeddingModel);
+            var response = await embeddingClient.GenerateEmbeddingAsync(text, cancellationToken: ct);
+            vector = response.Value.ToFloats().ToArray();
+        }
+
+        _logger?.LogInformation("Embedding response: dimensions={Dims}", vector.Length);
+        return vector;
+    }
+
+    /// <summary>Check if the current provider is Gemini (which needs native embedding API).</summary>
+    private bool IsGeminiProvider()
+    {
+        // If a separate embedding base is configured, use the OpenAI SDK path
+        if (!string.IsNullOrEmpty(_embeddingApiBase))
+            return false;
+
+        // Check if the default model or gateway indicates Gemini
+        return _defaultModel.Contains("gemini", StringComparison.OrdinalIgnoreCase)
+            || _gateway?.Name == "gemini";
+    }
+
+    /// <summary>
+    /// Call the Gemini native embedding API directly (not OpenAI-compatible).
+    /// Endpoint: POST /v1beta/models/{model}:embedContent
+    /// </summary>
+    private async Task<float[]> EmbedViaGeminiNativeAsync(string text, string model, CancellationToken ct)
+    {
+        var apiKey = _embeddingApiKey ?? "no-key";
+        var baseUrl = "https://generativelanguage.googleapis.com";
+        var url = $"{baseUrl}/v1beta/models/{model}:embedContent";
+
+        var requestBody = new
+        {
+            content = new
+            {
+                parts = new[] { new { text } }
+            }
+        };
+
+        using var httpClient = new HttpClient();
+        var jsonBody = JsonSerializer.Serialize(requestBody);
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(jsonBody, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("x-goog-api-key", apiKey);
+
+        var response = await httpClient.SendAsync(request, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Gemini embedding API error ({response.StatusCode}): {responseBody}");
+
+        // Parse the Gemini native response: { "embedding": { "values": [...] } }
+        using var doc = JsonDocument.Parse(responseBody);
+        var values = doc.RootElement
+            .GetProperty("embedding")
+            .GetProperty("values")
+            .EnumerateArray()
+            .Select(v => v.GetSingle())
+            .ToArray();
+
+        return values;
+    }
+
+    /// <summary>
+    /// Get or create an OpenAI SDK embedding client. If a separate embedding endpoint is configured,
+    /// uses that instead of the main chat client.
+    /// </summary>
+    private OpenAI.Embeddings.EmbeddingClient GetOrCreateEmbeddingClient(string model)
+    {
+        if (_embeddingClient != null && _embeddingClientModel == model)
+            return _embeddingClient;
+
+        if (!string.IsNullOrEmpty(_embeddingApiBase))
+        {
+            var opts = new OpenAIClientOptions { Endpoint = new Uri(_embeddingApiBase) };
+            var cred = new ApiKeyCredential(_embeddingApiKey ?? "no-key");
+            var client = new OpenAIClient(cred, opts);
+            _embeddingClient = client.GetEmbeddingClient(model);
+        }
+        else
+        {
+            _embeddingClient = _openAiClient.GetEmbeddingClient(model);
+        }
+
+        _embeddingClientModel = model;
+        return _embeddingClient;
     }
 
     public string GetDefaultModel() => _defaultModel;

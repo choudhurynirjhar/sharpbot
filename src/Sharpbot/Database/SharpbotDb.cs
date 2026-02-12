@@ -138,6 +138,21 @@ public sealed class SharpbotDb : IDisposable
                 ON logs(timestamp);
             CREATE INDEX IF NOT EXISTS idx_logs_level
                 ON logs(level, timestamp);
+
+            -- ── Semantic Memory Embeddings ──────────────────────────────
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                content         TEXT NOT NULL,
+                embedding       BLOB NOT NULL,
+                dimensions      INTEGER NOT NULL,
+                source          TEXT NOT NULL DEFAULT 'manual',
+                source_id       TEXT,
+                metadata_json   TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_source
+                ON memory_embeddings(source);
         """);
     }
 

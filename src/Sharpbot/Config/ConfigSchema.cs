@@ -108,6 +108,9 @@ public class AgentDefaults
     /// </summary>
     public int? MaxContextTokens { get; set; }
 
+    /// <summary>Embedding model used for semantic memory (default: text-embedding-3-small).</summary>
+    public string EmbeddingModel { get; set; } = "text-embedding-3-small";
+
     /// <summary>Per-model parameter overrides keyed by model name or pattern.</summary>
     public Dictionary<string, ModelOverride> ModelOverrides { get; set; } = [];
 }
@@ -209,6 +212,31 @@ public class SkillsConfig
     public SkillsLoadConfig Load { get; set; } = new();
 }
 
+/// <summary>Semantic memory configuration.</summary>
+public class SemanticMemoryConfig
+{
+    /// <summary>Enable semantic memory (default: true).</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Embedding model to use (default: text-embedding-3-small).</summary>
+    public string EmbeddingModel { get; set; } = "text-embedding-3-small";
+
+    /// <summary>Automatically enrich the system prompt with relevant semantic memories.</summary>
+    public bool AutoEnrich { get; set; } = true;
+
+    /// <summary>Number of top-K results for auto-enrichment (default: 3).</summary>
+    public int AutoEnrichTopK { get; set; } = 3;
+
+    /// <summary>Minimum similarity score to include a result (default: 0.5).</summary>
+    public float MinScore { get; set; } = 0.5f;
+
+    /// <summary>Override API base URL for embeddings (e.g., https://openrouter.ai/api/v1). Auto-detected if empty.</summary>
+    public string? EmbeddingApiBase { get; set; }
+
+    /// <summary>Override API key for embeddings. Auto-detected if empty.</summary>
+    public string? EmbeddingApiKey { get; set; }
+}
+
 /// <summary>Root configuration for Sharpbot.</summary>
 public class SharpbotConfig
 {
@@ -218,6 +246,7 @@ public class SharpbotConfig
     public GatewayConfig Gateway { get; set; } = new();
     public ToolsConfig Tools { get; set; } = new();
     public SkillsConfig Skills { get; set; } = new();
+    public SemanticMemoryConfig SemanticMemory { get; set; } = new();
 
     /// <summary>Get expanded workspace path (relative paths resolved against app directory).</summary>
     [JsonIgnore]

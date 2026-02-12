@@ -60,6 +60,18 @@ public sealed record AgentLoopOptions
     /// </summary>
     public int? MaxContextTokens { get; init; }
 
+    /// <summary>Semantic memory store for embedding-based retrieval (optional).</summary>
+    public SemanticMemoryStore? SemanticMemory { get; init; }
+
+    /// <summary>Whether to auto-enrich the system prompt with semantic memories (default: true).</summary>
+    public bool SemanticMemoryAutoEnrich { get; init; } = true;
+
+    /// <summary>Number of top-K results for auto-enrichment (default: 3).</summary>
+    public int SemanticMemoryAutoEnrichTopK { get; init; } = 3;
+
+    /// <summary>Minimum similarity score for auto-enrichment (default: 0.5).</summary>
+    public float SemanticMemoryAutoEnrichMinScore { get; init; } = 0.5f;
+
     /// <summary>Callback invoked after each message with the completed telemetry. Used for usage tracking.</summary>
     public Action<AgentTelemetry>? OnTelemetry { get; init; }
 }

@@ -44,6 +44,7 @@ public sealed class AgentLoop : IDisposable
     private readonly SubagentManager _subagents;
     private readonly BrowserManager _browserManager;
     private readonly ContextCompactor _compactor;
+    private readonly SemanticMemoryStore? _semanticMemory;
     private readonly Action<AgentTelemetry>? _onTelemetry;
     private readonly ILogger? _logger;
     private volatile bool _running;
@@ -76,7 +77,14 @@ public sealed class AgentLoop : IDisposable
             builtinSkillsDir: Directory.Exists(builtinSkillsDir) ? builtinSkillsDir : null,
             skillsConfig: options.SkillsConfig,
             appConfig: options.AppConfig);
-        _context = new ContextBuilder(_workspace, skills: _skills, logger: logger);
+        _context = new ContextBuilder(
+            _workspace,
+            skills: _skills,
+            semanticMemory: options.SemanticMemory,
+            autoEnrich: options.SemanticMemoryAutoEnrich,
+            autoEnrichTopK: options.SemanticMemoryAutoEnrichTopK,
+            autoEnrichMinScore: options.SemanticMemoryAutoEnrichMinScore,
+            logger: logger);
         _sessions = options.SessionManager ?? new SessionManager(Database.SharpbotDb.CreateDefault());
         _tools = new ToolRegistry(logger);
         _subagents = new SubagentManager(
@@ -90,6 +98,7 @@ public sealed class AgentLoop : IDisposable
             logger: logger);
         _browserManager = new BrowserManager(headless: true, logger: logger);
         _compactor = new ContextCompactor(provider, _model, maxTokens: _maxTokens, contextLimitOverride: options.MaxContextTokens, logger: logger);
+        _semanticMemory = options.SemanticMemory;
 
         RegisterDefaultTools();
     }
@@ -135,6 +144,13 @@ public sealed class AgentLoop : IDisposable
         _tools.Register(new BrowserWaitTool(_browserManager));
         _tools.Register(new BrowserTabsTool(_browserManager));
         _tools.Register(new BrowserBackTool(_browserManager));
+
+        // Semantic memory tools (search and index)
+        if (_semanticMemory != null)
+        {
+            _tools.Register(new MemorySearchTool(_semanticMemory));
+            _tools.Register(new MemoryIndexTool(_semanticMemory));
+        }
     }
 
     /// <summary>The skills loader for accessing skill metadata.</summary>
@@ -247,7 +263,7 @@ public sealed class AgentLoop : IDisposable
             SetToolContexts(msg.Channel, msg.ChatId);
 
             // Build initial messages
-            var messages = _context.BuildMessages(
+            var messages = await _context.BuildMessagesAsync(
                 history: session.GetHistory(_maxSessionMessages),
                 currentMessage: msg.Content,
                 channel: msg.Channel,
@@ -338,7 +354,7 @@ public sealed class AgentLoop : IDisposable
             var session = _sessions.GetOrCreate(sessionKey);
             SetToolContexts(originChannel, originChatId);
 
-            var messages = _context.BuildMessages(
+            var messages = await _context.BuildMessagesAsync(
                 history: session.GetHistory(_maxSessionMessages),
                 currentMessage: msg.Content,
                 channel: originChannel,
@@ -832,11 +848,12 @@ public sealed class AgentLoop : IDisposable
             var session = _sessions.GetOrCreate(effectiveSessionKey);
             SetToolContexts(msg.Channel, msg.ChatId);
 
-            var messages = _context.BuildMessages(
+            var messages = await _context.BuildMessagesAsync(
                 history: session.GetHistory(_maxSessionMessages),
                 currentMessage: msg.Content,
                 channel: msg.Channel,
-                chatId: msg.ChatId);
+                chatId: msg.ChatId,
+                ct: ct);
 
             // Stream the iterative loop
             var fullContent = new System.Text.StringBuilder();

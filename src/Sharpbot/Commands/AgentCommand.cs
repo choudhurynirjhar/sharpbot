@@ -63,6 +63,16 @@ public sealed class AgentCommand : Command
             return;
         }
 
+        // Create semantic memory store if enabled
+        var smConfig = config.SemanticMemory;
+        var db = Database.SharpbotDb.CreateDefault();
+        SemanticMemoryStore? semanticMemory = null;
+        if (smConfig.Enabled)
+        {
+            var embModel = EmbeddingModelResolver.Resolve(smConfig.EmbeddingModel, config.Agents.Defaults.Model);
+            semanticMemory = new SemanticMemoryStore(db, provider, embModel, logger);
+        }
+
         using var agentLoop = new AgentLoop(bus, provider, new AgentLoopOptions
         {
             Workspace = config.WorkspacePath,
@@ -76,6 +86,10 @@ public sealed class AgentCommand : Command
             RestrictToWorkspace = config.Tools.RestrictToWorkspace,
             SkillsConfig = config.Skills,
             AppConfig = config,
+            SemanticMemory = semanticMemory,
+            SemanticMemoryAutoEnrich = smConfig.AutoEnrich,
+            SemanticMemoryAutoEnrichTopK = smConfig.AutoEnrichTopK,
+            SemanticMemoryAutoEnrichMinScore = smConfig.MinScore,
         }, logger);
 
         if (message is not null)
