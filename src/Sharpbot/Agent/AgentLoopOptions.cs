@@ -1,5 +1,6 @@
 using Sharpbot.Config;
 using Sharpbot.Cron;
+using Sharpbot.Plugins;
 using Sharpbot.Session;
 
 namespace Sharpbot.Agent;
@@ -74,4 +75,7 @@ public sealed record AgentLoopOptions
 
     /// <summary>Callback invoked after each message with the completed telemetry. Used for usage tracking.</summary>
     public Action<AgentTelemetry>? OnTelemetry { get; init; }
+
+    /// <summary>Plugin loader for registering plugin-contributed tools and hooks (optional).</summary>
+    public PluginLoader? PluginLoader { get; init; }
 }

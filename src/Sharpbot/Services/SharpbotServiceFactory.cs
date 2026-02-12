@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Sharpbot.Config;
+using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Spectre.Console;
 
@@ -82,6 +83,45 @@ public static class SharpbotServiceFactory
             builder.AddConsole();
             builder.SetMinimumLevel(minimumLevel);
         });
+    }
+
+    /// <summary>
+    /// Resolve an LLM provider, checking plugin providers first.
+    /// If the configured model prefix matches a plugin provider name, use the plugin provider.
+    /// Otherwise, fall back to the default provider resolution.
+    /// </summary>
+    public static ILlmProvider CreateProviderWithPlugins(
+        SharpbotConfig config,
+        ILogger logger,
+        PluginLoader? pluginLoader)
+    {
+        if (pluginLoader != null)
+        {
+            var model = config.Agents.Defaults.Model;
+            var pluginProviders = pluginLoader.GetAllProviders();
+
+            // Check if any plugin provider matches the model prefix (e.g., "ollama/llama3")
+            foreach (var (name, provider) in pluginProviders)
+            {
+                if (model.StartsWith($"{name}/", StringComparison.OrdinalIgnoreCase)
+                    || model.Equals(name, StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogInformation("Using plugin provider '{Name}' for model '{Model}'", name, model);
+                    return provider;
+                }
+            }
+
+            // Also check if there's a plugin provider name in config
+            var providerName = config.Agents.Defaults.Provider;
+            if (!string.IsNullOrEmpty(providerName) && pluginProviders.TryGetValue(providerName, out var configured))
+            {
+                logger.LogInformation("Using configured plugin provider '{Name}'", providerName);
+                return configured;
+            }
+        }
+
+        // Fall back to default built-in provider
+        return CreateProvider(config, logger);
     }
 
     /// <summary>

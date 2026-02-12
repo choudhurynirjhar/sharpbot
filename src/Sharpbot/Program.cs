@@ -11,6 +11,7 @@ using Sharpbot.Config;
 using Sharpbot.Cron;
 using Sharpbot.Database;
 using Sharpbot.Logging;
+using Sharpbot.Plugins;
 using Sharpbot.Services;
 using Sharpbot.Session;
 using Sharpbot.Telemetry;
@@ -113,6 +114,10 @@ builder.Services.AddOpenTelemetry()
 // ── Usage tracking ──────────────────────────────────────────────────────────
 var usageStore = new UsageStore(db);
 builder.Services.AddSingleton(usageStore);
+
+// ── Plugin system ────────────────────────────────────────────────────────────
+builder.Services.AddSingleton<PluginLoader>(sp =>
+    new PluginLoader(sp.GetRequiredService<ILoggerFactory>().CreateLogger("plugins")));
 
 // ── Gateway hosted service (agent loop, cron, heartbeat, channels) ──────────
 builder.Services.AddSingleton<SharpbotHostedService>();

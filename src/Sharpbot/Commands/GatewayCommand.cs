@@ -6,6 +6,7 @@ using Sharpbot.Channels;
 using Sharpbot.Config;
 using Sharpbot.Cron;
 using Sharpbot.Heartbeat;
+using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Sharpbot.Services;
 using Sharpbot.Session;
@@ -51,10 +52,17 @@ public sealed class GatewayCommand : Command
         var config = ConfigLoader.LoadConfig();
         using var bus = new MessageBus(logger);
 
+        // Load plugins early (before provider, since plugins can contribute providers)
+        using var pluginLoader = new PluginLoader(logger);
+        var pluginsDir = config.Plugins.PluginsDir;
+        if (!Path.IsPathRooted(pluginsDir))
+            pluginsDir = Path.Combine(AppContext.BaseDirectory, pluginsDir);
+        await pluginLoader.LoadPluginsAsync(pluginsDir, config.WorkspacePath, config.Plugins.Entries, loggerFactory);
+
         ILlmProvider provider;
         try
         {
-            provider = SharpbotServiceFactory.CreateProvider(config, logger);
+            provider = SharpbotServiceFactory.CreateProviderWithPlugins(config, logger, pluginLoader);
         }
         catch (ProviderConfigurationException ex)
         {
@@ -96,6 +104,7 @@ public sealed class GatewayCommand : Command
             SemanticMemoryAutoEnrich = smConfig.AutoEnrich,
             SemanticMemoryAutoEnrichTopK = smConfig.AutoEnrichTopK,
             SemanticMemoryAutoEnrichMinScore = smConfig.MinScore,
+            PluginLoader = pluginLoader,
         }, logger);
 
         cronService.OnJob = async job =>
@@ -127,6 +136,10 @@ public sealed class GatewayCommand : Command
             logger: logger);
 
         using var channels = new ChannelManager(config, bus, logger);
+
+        // Register plugin channels
+        foreach (var ch in pluginLoader.GetAllChannels(bus, logger))
+            channels.RegisterChannel(ch.ChannelName, ch);
 
         if (channels.EnabledChannels.Count > 0)
             AnsiConsole.MarkupLine($"[green]✓[/] Channels enabled: {string.Join(", ", channels.EnabledChannels)}");

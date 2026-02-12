@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Sharpbot.Agent;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Sharpbot.Services;
 using Spectre.Console;
@@ -52,10 +53,17 @@ public sealed class AgentCommand : Command
         var config = ConfigLoader.LoadConfig();
         using var bus = new MessageBus(logger);
 
+        // Load plugins early (before provider, since plugins can contribute providers)
+        using var pluginLoader = new PluginLoader(logger);
+        var pluginsDir = config.Plugins.PluginsDir;
+        if (!Path.IsPathRooted(pluginsDir))
+            pluginsDir = Path.Combine(AppContext.BaseDirectory, pluginsDir);
+        await pluginLoader.LoadPluginsAsync(pluginsDir, config.WorkspacePath, config.Plugins.Entries, loggerFactory);
+
         ILlmProvider provider;
         try
         {
-            provider = SharpbotServiceFactory.CreateProvider(config, logger);
+            provider = SharpbotServiceFactory.CreateProviderWithPlugins(config, logger, pluginLoader);
         }
         catch (ProviderConfigurationException ex)
         {
@@ -90,6 +98,7 @@ public sealed class AgentCommand : Command
             SemanticMemoryAutoEnrich = smConfig.AutoEnrich,
             SemanticMemoryAutoEnrichTopK = smConfig.AutoEnrichTopK,
             SemanticMemoryAutoEnrichMinScore = smConfig.MinScore,
+            PluginLoader = pluginLoader,
         }, logger);
 
         if (message is not null)

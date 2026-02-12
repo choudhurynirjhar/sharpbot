@@ -5,6 +5,7 @@ using Sharpbot.Channels;
 using Sharpbot.Config;
 using Sharpbot.Cron;
 using Sharpbot.Heartbeat;
+using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Sharpbot.Session;
 using Sharpbot.Telemetry;
@@ -23,6 +24,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
     private readonly SessionManager _sessionManager;
     private readonly CronService _cronService;
     private readonly Database.SharpbotDb _db;
+    private readonly PluginLoader _pluginLoader;
     private readonly ILogger<SharpbotHostedService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly UsageStore _usageStore;
@@ -45,6 +47,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         SessionManager sessionManager,
         CronService cronService,
         Database.SharpbotDb db,
+        PluginLoader pluginLoader,
         UsageStore usageStore,
         ILogger<SharpbotHostedService> logger,
         ILoggerFactory loggerFactory)
@@ -54,6 +57,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         _sessionManager = sessionManager;
         _cronService = cronService;
         _db = db;
+        _pluginLoader = pluginLoader;
         _usageStore = usageStore;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -93,11 +97,21 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         // Auto-onboard if needed
         EnsureOnboarded();
 
+        // Load plugins early (independent of provider availability)
+        var pluginsDir = _config.Plugins.PluginsDir;
+        if (!Path.IsPathRooted(pluginsDir))
+            pluginsDir = Path.Combine(AppContext.BaseDirectory, pluginsDir);
+        await _pluginLoader.LoadPluginsAsync(
+            pluginsDir,
+            _config.WorkspacePath,
+            _config.Plugins.Entries,
+            _loggerFactory);
+
         ILlmProvider provider;
         try
         {
             var providerLogger = _loggerFactory.CreateLogger("llm-provider");
-            provider = SharpbotServiceFactory.CreateProvider(_config, providerLogger);
+            provider = SharpbotServiceFactory.CreateProviderWithPlugins(_config, providerLogger, _pluginLoader);
         }
         catch (ProviderConfigurationException ex)
         {
@@ -147,6 +161,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             SemanticMemoryAutoEnrichTopK = smConfig.AutoEnrichTopK,
             SemanticMemoryAutoEnrichMinScore = smConfig.MinScore,
             OnTelemetry = telemetry => _usageStore.Record(telemetry),
+            PluginLoader = _pluginLoader,
         }, agentLogger);
 
         // Wire cron job execution
@@ -185,6 +200,14 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             logger: _loggerFactory.CreateLogger("channels"),
             sessionManager: _sessionManager,
             loggerFactory: _loggerFactory);
+
+        // Register plugin-contributed channels
+        var pluginChannels = _pluginLoader.GetAllChannels(_bus, _loggerFactory.CreateLogger("plugin-channels"));
+        foreach (var channel in pluginChannels)
+        {
+            _channels.RegisterChannel(channel.ChannelName, channel);
+            _logger.LogInformation("Registered plugin channel: {Name}", channel.ChannelName);
+        }
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -340,5 +363,6 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         _agentLoop?.Dispose();
         _heartbeat?.Dispose();
         _channels?.Dispose();
+        _pluginLoader.Dispose();
     }
 }

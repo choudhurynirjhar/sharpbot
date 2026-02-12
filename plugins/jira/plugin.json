@@ -1,0 +1,9 @@
+{
+  "name": "jira",
+  "version": "1.0.0",
+  "description": "Jira integration — search, browse, and explore tickets, projects, and boards",
+  "assembly": "SharpbotPlugin.Jira.dll",
+  "entryPoint": "SharpbotPlugin.Jira.JiraPlugin",
+  "provides": ["tool"],
+  "enabled": true
+}

@@ -95,6 +95,13 @@ public class AgentDefaults
 {
     public string Workspace { get; set; } = "data/workspace";
     public string Model { get; set; } = "anthropic/claude-opus-4-5";
+
+    /// <summary>
+    /// Explicit provider name override. When set, selects a plugin provider by name
+    /// instead of auto-detecting from the model prefix. Leave null for auto-detection.
+    /// </summary>
+    public string? Provider { get; set; }
+
     public int MaxTokens { get; set; } = 8192;
     public double Temperature { get; set; } = 0.7;
     public int MaxToolIterations { get; set; } = 20;
@@ -251,6 +258,16 @@ public class SemanticMemoryConfig
     public string? EmbeddingApiKey { get; set; }
 }
 
+/// <summary>Plugin system configuration.</summary>
+public class PluginsConfig
+{
+    /// <summary>Directory containing plugin subdirectories (relative to app base).</summary>
+    public string PluginsDir { get; set; } = "plugins";
+
+    /// <summary>Per-plugin configuration entries, keyed by plugin name.</summary>
+    public Dictionary<string, Dictionary<string, object>> Entries { get; set; } = [];
+}
+
 /// <summary>Root configuration for Sharpbot.</summary>
 public class SharpbotConfig
 {
@@ -261,6 +278,7 @@ public class SharpbotConfig
     public ToolsConfig Tools { get; set; } = new();
     public SkillsConfig Skills { get; set; } = new();
     public SemanticMemoryConfig SemanticMemory { get; set; } = new();
+    public PluginsConfig Plugins { get; set; } = new();
 
     /// <summary>Get expanded workspace path (relative paths resolved against app directory).</summary>
     [JsonIgnore]

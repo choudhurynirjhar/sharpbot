@@ -7,6 +7,7 @@ using Sharpbot.Bus;
 using Sharpbot.Channels;
 using Sharpbot.Config;
 using Sharpbot.Cron;
+using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Sharpbot.Session;
 using Sharpbot.Telemetry;
@@ -46,6 +47,8 @@ public sealed class AgentLoop : IDisposable
     private readonly ContextCompactor _compactor;
     private readonly ProcessSessionManager _processManager;
     private readonly SemanticMemoryStore? _semanticMemory;
+    private readonly PluginLoader? _pluginLoader;
+    private readonly List<IPluginHook> _pluginHooks = [];
     private readonly Action<AgentTelemetry>? _onTelemetry;
     private readonly ILogger? _logger;
     private volatile bool _running;
@@ -106,8 +109,10 @@ public sealed class AgentLoop : IDisposable
             sessionCleanupMs: _execConfig.SessionCleanupMs,
             defaultWorkDir: _workspace,
             logger: logger);
+        _pluginLoader = options.PluginLoader;
 
         RegisterDefaultTools();
+        RegisterPlugins();
     }
 
     private void RegisterDefaultTools()
@@ -161,6 +166,25 @@ public sealed class AgentLoop : IDisposable
             _tools.Register(new MemorySearchTool(_semanticMemory));
             _tools.Register(new MemoryIndexTool(_semanticMemory));
         }
+    }
+
+    /// <summary>Register tools and hooks from loaded plugins.</summary>
+    private void RegisterPlugins()
+    {
+        if (_pluginLoader == null) return;
+
+        // Register plugin-contributed tools
+        var pluginTools = _pluginLoader.GetAllTools();
+        foreach (var tool in pluginTools)
+        {
+            _tools.Register(tool);
+            _logger?.LogInformation("Registered plugin tool: {Name}", tool.Name);
+        }
+
+        // Collect plugin hooks
+        _pluginHooks.AddRange(_pluginLoader.GetAllHooks());
+        if (_pluginHooks.Count > 0)
+            _logger?.LogInformation("Registered {Count} plugin hook(s)", _pluginHooks.Count);
     }
 
     /// <summary>The skills loader for accessing skill metadata.</summary>
@@ -267,6 +291,21 @@ public sealed class AgentLoop : IDisposable
 
         try
         {
+            // Plugin hook: OnMessageReceivedAsync
+            var hookReply = await InvokeOnMessageReceivedAsync(msg);
+            if (hookReply != null)
+            {
+                _logger?.LogInformation("Plugin hook short-circuited message from {SenderId}", msg.SenderId);
+                telemetry.Complete();
+                SafeInvokeTelemetry(telemetry);
+                return (new OutboundMessage
+                {
+                    Channel = msg.Channel,
+                    ChatId = msg.ChatId,
+                    Content = hookReply,
+                }, telemetry);
+            }
+
             var session = _sessions.GetOrCreate(msg.SessionKey);
 
             // Update tool contexts
@@ -278,6 +317,9 @@ public sealed class AgentLoop : IDisposable
                 currentMessage: msg.Content,
                 channel: msg.Channel,
                 chatId: msg.ChatId);
+
+            // Plugin hook: OnSystemPromptAsync — let hooks modify the system prompt
+            messages = await InvokeOnSystemPromptAsync(messages);
 
             // Run the iterative LLM loop (shared helper)
             var finalContent = await RunIterativeLoopAsync(messages, _tools, telemetry: telemetry);
@@ -530,22 +572,38 @@ public sealed class AgentLoop : IDisposable
                 toolActivity?.SetTag("sharpbot.tool.name", toolCall.Name);
                 toolActivity?.SetTag("sharpbot.tool.call_id", toolCall.Id);
 
+                // Plugin hook: OnBeforeToolCallAsync — allow hooks to block a tool call
+                var allowToolCall = await InvokeOnBeforeToolCallAsync(toolCall.Name, toolCall.Arguments);
+
                 var toolSw = Stopwatch.StartNew();
                 string result;
                 bool success = true;
                 string? error = null;
-                try
+
+                if (!allowToolCall)
                 {
-                    result = await tools.ExecuteAsync(toolCall.Name, toolCall.Arguments);
-                }
-                catch (Exception ex)
-                {
-                    result = $"Error: {ex.Message}";
+                    result = $"Tool call '{toolCall.Name}' was blocked by a plugin hook.";
                     success = false;
-                    error = ex.Message;
-                    toolActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    error = "Blocked by plugin hook";
+                }
+                else
+                {
+                    try
+                    {
+                        result = await tools.ExecuteAsync(toolCall.Name, toolCall.Arguments);
+                    }
+                    catch (Exception ex)
+                    {
+                        result = $"Error: {ex.Message}";
+                        success = false;
+                        error = ex.Message;
+                        toolActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    }
                 }
                 toolSw.Stop();
+
+                // Plugin hook: OnAfterToolCallAsync
+                await InvokeOnAfterToolCallAsync(toolCall.Name, result);
 
                 toolActivity?.SetTag("sharpbot.tool.success", success);
                 toolActivity?.SetTag("sharpbot.tool.result_length", result.Length);
@@ -780,21 +838,37 @@ public sealed class AgentLoop : IDisposable
 
                 yield return AgentStreamEvent.ToolStart(toolCall.Name, toolCall.Id);
 
+                // Plugin hook: OnBeforeToolCallAsync
+                var allowToolCall = await InvokeOnBeforeToolCallAsync(toolCall.Name, toolCall.Arguments);
+
                 var toolSw = Stopwatch.StartNew();
                 string result;
                 bool success = true;
                 string? error = null;
-                try
+
+                if (!allowToolCall)
                 {
-                    result = await tools.ExecuteAsync(toolCall.Name, toolCall.Arguments);
-                }
-                catch (Exception ex)
-                {
-                    result = $"Error: {ex.Message}";
+                    result = $"Tool call '{toolCall.Name}' was blocked by a plugin hook.";
                     success = false;
-                    error = ex.Message;
+                    error = "Blocked by plugin hook";
+                }
+                else
+                {
+                    try
+                    {
+                        result = await tools.ExecuteAsync(toolCall.Name, toolCall.Arguments);
+                    }
+                    catch (Exception ex)
+                    {
+                        result = $"Error: {ex.Message}";
+                        success = false;
+                        error = ex.Message;
+                    }
                 }
                 toolSw.Stop();
+
+                // Plugin hook: OnAfterToolCallAsync
+                await InvokeOnAfterToolCallAsync(toolCall.Name, result);
 
                 // Record OTel + telemetry
                 SharpbotInstrumentation.ToolCallsTotal.Add(1,
@@ -864,6 +938,9 @@ public sealed class AgentLoop : IDisposable
                 channel: msg.Channel,
                 chatId: msg.ChatId,
                 ct: ct);
+
+            // Plugin hook: OnSystemPromptAsync
+            messages = await InvokeOnSystemPromptAsync(messages);
 
             // Stream the iterative loop
             var fullContent = new System.Text.StringBuilder();
@@ -953,6 +1030,92 @@ public sealed class AgentLoop : IDisposable
 
         var (response, telemetry) = await ProcessMessageWithTelemetryAsync(msg);
         return (response?.Content ?? "", telemetry);
+    }
+
+    // ── Plugin hook invocation helpers ──────────────────────────────
+
+    /// <summary>Run OnMessageReceivedAsync on all hooks. Returns short-circuit reply, or null.</summary>
+    private async Task<string?> InvokeOnMessageReceivedAsync(InboundMessage msg)
+    {
+        foreach (var hook in _pluginHooks)
+        {
+            try
+            {
+                var reply = await hook.OnMessageReceivedAsync(msg);
+                if (reply != null) return reply;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Plugin hook OnMessageReceivedAsync failed");
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Run OnSystemPromptAsync on all hooks. Modifies the system message in place.</summary>
+    private async Task<List<Dictionary<string, object?>>> InvokeOnSystemPromptAsync(
+        List<Dictionary<string, object?>> messages)
+    {
+        if (_pluginHooks.Count == 0 || messages.Count == 0) return messages;
+
+        // The first message is the system prompt
+        var first = messages[0];
+        if (first.GetValueOrDefault("role")?.ToString() != "system") return messages;
+
+        var systemContent = first.GetValueOrDefault("content")?.ToString() ?? "";
+
+        foreach (var hook in _pluginHooks)
+        {
+            try
+            {
+                systemContent = await hook.OnSystemPromptAsync(systemContent);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Plugin hook OnSystemPromptAsync failed");
+            }
+        }
+
+        first["content"] = systemContent;
+        return messages;
+    }
+
+    /// <summary>Run OnBeforeToolCallAsync on all hooks. Returns false if any hook blocks.</summary>
+    private async Task<bool> InvokeOnBeforeToolCallAsync(string toolName, Dictionary<string, object?> args)
+    {
+        foreach (var hook in _pluginHooks)
+        {
+            try
+            {
+                var allow = await hook.OnBeforeToolCallAsync(toolName, args);
+                if (!allow)
+                {
+                    _logger?.LogInformation("Plugin hook blocked tool call: {ToolName}", toolName);
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Plugin hook OnBeforeToolCallAsync failed");
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Run OnAfterToolCallAsync on all hooks.</summary>
+    private async Task InvokeOnAfterToolCallAsync(string toolName, string result)
+    {
+        foreach (var hook in _pluginHooks)
+        {
+            try
+            {
+                await hook.OnAfterToolCallAsync(toolName, result);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Plugin hook OnAfterToolCallAsync failed");
+            }
+        }
     }
 
     /// <inheritdoc />
