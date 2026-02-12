@@ -25,7 +25,7 @@ using Sharpbot.Telemetry;
 
 // Known CLI subcommands
 var cliCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    { "agent", "cron", "channels", "status", "onboard", "gateway" };
+    { "agent", "cron", "channels", "status", "onboard", "gateway", "gmail-auth" };
 
 var hasCliCommand = args.Length > 0 && cliCommands.Contains(args[0]);
 
@@ -40,6 +40,7 @@ if (hasCliCommand)
         new StatusCommand(),
         new OnboardCommand(),
         new GatewayCommand(),
+        new GmailAuthCommand(),
     };
 
     var parseResult = root.Parse(args);

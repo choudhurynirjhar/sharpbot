@@ -1,0 +1,9 @@
+{
+  "name": "gmail",
+  "version": "1.0.0",
+  "description": "Gmail integration — search, read, send, reply, and manage emails via OAuth2",
+  "assembly": "SharpbotPlugin.Gmail.dll",
+  "entryPoint": "SharpbotPlugin.Gmail.GmailPlugin",
+  "provides": ["tool"],
+  "enabled": true
+}

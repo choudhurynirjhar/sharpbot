@@ -306,3 +306,6 @@ appsettings.*.json
 
 # Launch profiles may contain per-dev secrets
 **/Properties/launchSettings.json
+
+# Gmail OAuth tokens (sensitive)
+**/gmail-token.json
