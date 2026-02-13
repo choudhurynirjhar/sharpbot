@@ -210,11 +210,80 @@ public class ExecToolConfig
     public int SessionCleanupMs { get; set; } = 1_800_000;
 }
 
+/// <summary>Media pipeline policy configuration.</summary>
+public class MediaToolConfig
+{
+    /// <summary>Enable the normalized media pipeline.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Allowed MIME prefixes/types (e.g. image/, audio/, video/, application/pdf).</summary>
+    public List<string> AllowedMimeTypes { get; set; } =
+    [
+        "image/",
+        "audio/",
+        "video/",
+        "application/pdf",
+        "text/plain",
+    ];
+
+    /// <summary>Maximum attachment bytes per media item.</summary>
+    public long MaxBytesPerItem { get; set; } = 25 * 1024 * 1024;
+
+    /// <summary>Maximum media item count accepted in a single message.</summary>
+    public int MaxItemsPerMessage { get; set; } = 10;
+
+    /// <summary>TTL in minutes for temporary media materialization artifacts.</summary>
+    public int TempTtlMinutes { get; set; } = 60;
+
+    /// <summary>When true, unknown MIME types are quarantined instead of accepted.</summary>
+    public bool QuarantineUnknownMime { get; set; } = true;
+
+    /// <summary>When true, over-limit media is rejected at the policy gate.</summary>
+    public bool RejectOverLimit { get; set; } = true;
+
+    /// <summary>Download timeout in seconds for remote media fetching.</summary>
+    public int DownloadTimeoutSec { get; set; } = 30;
+
+    /// <summary>Processing timeout in seconds for OCR/STT/transcode processors.</summary>
+    public int ProcessingTimeoutSec { get; set; } = 120;
+
+    /// <summary>Enable OCR hook for image/PDF content.</summary>
+    public bool EnableOcr { get; set; } = false;
+
+    /// <summary>Enable speech-to-text hook for audio/video content.</summary>
+    public bool EnableTranscription { get; set; } = false;
+
+    /// <summary>OCR backend provider name (default: openai).</summary>
+    public string OcrProvider { get; set; } = "openai";
+
+    /// <summary>OCR model name (default: gpt-4o-mini).</summary>
+    public string OcrModel { get; set; } = "gpt-4o-mini";
+
+    /// <summary>Optional OCR API base override (default uses OpenAI provider ApiBase or OpenAI public API).</summary>
+    public string OcrApiBase { get; set; } = "";
+
+    /// <summary>Transcription backend provider name (default: openai).</summary>
+    public string TranscriptionProvider { get; set; } = "openai";
+
+    /// <summary>Transcription model name (default: gpt-4o-mini-transcribe).</summary>
+    public string TranscriptionModel { get; set; } = "gpt-4o-mini-transcribe";
+
+    /// <summary>Optional transcription API base override.</summary>
+    public string TranscriptionApiBase { get; set; } = "";
+
+    /// <summary>Optional default language hint (ISO code like en, fr).</summary>
+    public string DefaultLanguage { get; set; } = "";
+
+    /// <summary>Emit audit lifecycle events for all media assets.</summary>
+    public bool AuditEvents { get; set; } = true;
+}
+
 /// <summary>Tools configuration.</summary>
 public class ToolsConfig
 {
     public WebToolsConfig Web { get; set; } = new();
     public ExecToolConfig Exec { get; set; } = new();
+    public MediaToolConfig Media { get; set; } = new();
     public bool RestrictToWorkspace { get; set; }
 }
 

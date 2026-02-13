@@ -207,6 +207,115 @@
                         </div>
                     </div>
 
+                    <div class="settings-section">
+                        <h3>Media Pipeline</h3>
+                        <p class="section-hint">Enterprise media governance and reliability controls across all channels.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-enabled">
+                                    Enable media pipeline
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-audit-events">
+                                    Emit media audit events
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-quarantine-unknown">
+                                    Quarantine unknown MIME
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-reject-over-limit">
+                                    Reject over-limit media
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-media-max-bytes">Max bytes per item</label>
+                                <input type="number" id="setting-media-max-bytes" placeholder="26214400">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-max-items">Max items per message</label>
+                                <input type="number" id="setting-media-max-items" placeholder="10">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-ttl-minutes">Temp TTL minutes</label>
+                                <input type="number" id="setting-media-ttl-minutes" placeholder="60">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-media-download-timeout">Download timeout (sec)</label>
+                                <input type="number" id="setting-media-download-timeout" placeholder="30">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-processing-timeout">Processing timeout (sec)</label>
+                                <input type="number" id="setting-media-processing-timeout" placeholder="120">
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-enable-ocr">
+                                    Enable OCR hook
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setting-media-enable-transcription">
+                                    Enable transcription hook
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-media-allowed-mime">Allowed MIME list (comma-separated)</label>
+                            <input type="text" id="setting-media-allowed-mime" placeholder="image/,audio/,video/,application/pdf,text/plain">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-media-ocr-provider">OCR provider</label>
+                                <input type="text" id="setting-media-ocr-provider" placeholder="openai">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-ocr-model">OCR model</label>
+                                <input type="text" id="setting-media-ocr-model" placeholder="gpt-4o-mini">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-ocr-api-base">OCR API base (optional)</label>
+                                <input type="text" id="setting-media-ocr-api-base" placeholder="https://api.openai.com/v1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-media-transcription-provider">Transcription provider</label>
+                                <input type="text" id="setting-media-transcription-provider" placeholder="openai">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-transcription-model">Transcription model</label>
+                                <input type="text" id="setting-media-transcription-model" placeholder="gpt-4o-mini-transcribe">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-media-transcription-api-base">Transcription API base (optional)</label>
+                                <input type="text" id="setting-media-transcription-api-base" placeholder="https://api.openai.com/v1">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-media-default-language">Default language hint (optional)</label>
+                            <input type="text" id="setting-media-default-language" placeholder="en">
+                        </div>
+                        <div class="settings-actions" style="padding-top:0;">
+                            <button class="btn btn-ghost btn-sm" id="refresh-media-assets-btn">Refresh Assets</button>
+                            <button class="btn btn-ghost btn-sm" id="cleanup-media-assets-btn">Cleanup Expired</button>
+                            <span id="media-assets-status" class="save-status"></span>
+                        </div>
+                        <div id="media-assets-list" class="exec-approvals-list">
+                            <div class="empty-state">No media assets tracked yet.</div>
+                        </div>
+                    </div>
+
                     <!-- Exec Approvals Queue -->
                     <div class="settings-section">
                         <h3>Exec Approvals</h3>
@@ -424,6 +533,6 @@
         </main>
     </div>
 
-    <script src="/js/app.js?v=3"></script>
+    <script src="/js/app.js?v=4"></script>
 </body>
 </html>

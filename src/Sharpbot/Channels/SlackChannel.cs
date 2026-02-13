@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 
 namespace Sharpbot.Channels;
 
@@ -25,6 +26,7 @@ public sealed class SlackChannel : BaseChannel, IDisposable
     private const int RetryBaseDelayMs = 500;
 
     private readonly SlackConfig _config;
+    private readonly MediaPipelineService? _mediaPipeline;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
     private HttpClient? _http;
@@ -33,10 +35,15 @@ public sealed class SlackChannel : BaseChannel, IDisposable
     // Track thread context: chatId -> thread_ts for reply threading
     private readonly Dictionary<string, string> _threadMap = [];
 
-    public SlackChannel(SlackConfig config, MessageBus bus, ILogger? logger = null)
+    public SlackChannel(
+        SlackConfig config,
+        MessageBus bus,
+        MediaPipelineService? mediaPipeline = null,
+        ILogger? logger = null)
         : base(config, bus, logger)
     {
         _config = config;
+        _mediaPipeline = mediaPipeline;
     }
 
     // ─── Lifecycle ──────────────────────────────────────────────────
@@ -468,6 +475,7 @@ public sealed class SlackChannel : BaseChannel, IDisposable
         // Build content parts
         var contentParts = new List<string> { text };
         var mediaPaths = new List<string>();
+        var mediaAssetIds = new List<string>();
 
         // Handle file attachments
         if (ev.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Array)
@@ -480,6 +488,9 @@ public sealed class SlackChannel : BaseChannel, IDisposable
                     : file.TryGetProperty("url_private", out var urlEl2) ? urlEl2.GetString() : null;
                 var filename = file.TryGetProperty("name", out var fnEl) ? fnEl.GetString() ?? "file" : "file";
                 var fileId = file.TryGetProperty("id", out var fidEl) ? fidEl.GetString() ?? "file" : "file";
+                var mimeType = file.TryGetProperty("mimetype", out var mtEl) ? mtEl.GetString() ?? "" : "";
+                var sizeBytes = file.TryGetProperty("size", out var szEl) && szEl.TryGetInt64(out var parsedSize)
+                    ? parsedSize : 0;
 
                 if (urlPrivate is null || _http is null) continue;
 
@@ -496,13 +507,69 @@ public sealed class SlackChannel : BaseChannel, IDisposable
                     var bytes = await resp.Content.ReadAsByteArrayAsync();
                     await File.WriteAllBytesAsync(filePath, bytes);
 
+                    var effectiveSize = sizeBytes > 0 ? sizeBytes : bytes.LongLength;
+                    var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                    {
+                        Channel = ChannelName,
+                        ChatId = channelId,
+                        MimeType = mimeType,
+                        FileName = filename,
+                        SizeBytes = effectiveSize,
+                        SourceType = "slack",
+                        SourceRef = fileId,
+                        LocalPath = filePath,
+                        ItemCountInMessage = files.GetArrayLength(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["message_ts"] = messageTs,
+                            ["thread_ts"] = threadTs ?? messageTs,
+                            ["slack_file_id"] = fileId,
+                        },
+                    }, actor: "channel/slack");
+
                     mediaPaths.Add(filePath);
-                    contentParts.Add($"[attachment: {filePath}]");
+                    if (asset is not null)
+                    {
+                        mediaAssetIds.Add(asset.Id);
+                        contentParts.Add($"[attachment: {filePath}] [media_asset_id: {asset.Id}]");
+                    }
+                    else
+                    {
+                        contentParts.Add($"[attachment: {filePath}]");
+                    }
                 }
                 catch (Exception e)
                 {
                     Logger?.LogWarning(e, "Failed to download Slack file attachment");
-                    contentParts.Add($"[attachment: {filename} - download failed]");
+                    var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                    {
+                        Channel = ChannelName,
+                        ChatId = channelId,
+                        MimeType = mimeType,
+                        FileName = filename,
+                        SizeBytes = sizeBytes,
+                        SourceType = "slack",
+                        SourceRef = fileId,
+                        ItemCountInMessage = files.GetArrayLength(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["message_ts"] = messageTs,
+                            ["thread_ts"] = threadTs ?? messageTs,
+                            ["slack_file_id"] = fileId,
+                            ["download_status"] = "failed",
+                            ["failure_code"] = "MEDIA_DOWNLOAD_FAILED",
+                        },
+                    }, actor: "channel/slack");
+
+                    if (asset is not null)
+                    {
+                        mediaAssetIds.Add(asset.Id);
+                        contentParts.Add($"[attachment: {filename} - download failed] [media_asset_id: {asset.Id}]");
+                    }
+                    else
+                    {
+                        contentParts.Add($"[attachment: {filename} - download failed]");
+                    }
                 }
             }
         }
@@ -521,6 +588,8 @@ public sealed class SlackChannel : BaseChannel, IDisposable
         };
         if (!string.IsNullOrEmpty(threadTs))
             metadata["is_thread_reply"] = true;
+        if (mediaAssetIds.Count > 0)
+            metadata["media_asset_ids"] = mediaAssetIds;
 
         // Resolve user display name
         var displayName = await GetUserDisplayNameAsync(userId);

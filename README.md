@@ -488,6 +488,13 @@ Skills are markdown files (`SKILL.md`) that extend the agent without code change
 | `/api/usage` | GET | Usage summary with breakdowns |
 | `/api/usage/history` | GET | Usage history over time |
 | `/api/usage` | DELETE | Clear usage data |
+| `/api/media/config` | GET | Effective media pipeline policy |
+| `/api/media/ingest` | POST | Normalize + policy-evaluate a media asset |
+| `/api/media/assets` | GET | List recent normalized media assets |
+| `/api/media/assets/{id}` | GET | Get media asset details |
+| `/api/media/assets/{id}/audit` | GET | Get per-asset audit lifecycle events |
+| `/api/media/stats` | GET | Aggregate media pipeline stats by state/decision |
+| `/api/media/cleanup` | POST | Cleanup expired media assets |
 | `/slack/events` | POST | Slack Events API webhook (HTTP mode only) |
 
 ---
@@ -521,6 +528,7 @@ The built-in single-page dashboard at `http://localhost:56789` includes:
 - **Channels** — View status of all chat channels (Telegram, Discord, WhatsApp, Feishu, Slack)
 - **Logs** — Live log viewer with level filtering, search, and auto-refresh
 - **Usage** — Token usage analytics with breakdowns by model, channel, and day; CSV/JSON export
+- **Media Pipeline** — Enterprise media governance controls, policy settings, and asset observability
 - **Status** — System overview and health check
 
 ---

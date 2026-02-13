@@ -17,6 +17,10 @@ const API = {
     usageHistory: '/api/usage/history',
     execApprovalsPending: '/api/exec/approvals/pending',
     execApprovalsResolve: '/api/exec/approvals',
+    mediaConfig: '/api/media/config',
+    mediaAssets: '/api/media/assets',
+    mediaStats: '/api/media/stats',
+    mediaCleanup: '/api/media/cleanup',
 };
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -1058,6 +1062,8 @@ function initSettings() {
     document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
     document.getElementById('reload-settings-btn').addEventListener('click', loadSettings);
     document.getElementById('refresh-exec-approvals-btn')?.addEventListener('click', loadExecApprovals);
+    document.getElementById('refresh-media-assets-btn')?.addEventListener('click', loadMediaAssets);
+    document.getElementById('cleanup-media-assets-btn')?.addEventListener('click', cleanupMediaAssets);
 }
 
 async function loadSettings() {
@@ -1104,7 +1110,27 @@ async function loadSettings() {
         document.getElementById('setting-exec-safe-bins').value = (config.tools?.exec?.safeBins || []).join(', ');
         document.getElementById('setting-exec-allowlist').value = (config.tools?.exec?.allowlist || []).join('\n');
         document.getElementById('setting-restrict-workspace').checked = config.tools?.restrictToWorkspace || false;
+        document.getElementById('setting-media-enabled').checked = config.tools?.media?.enabled ?? true;
+        document.getElementById('setting-media-audit-events').checked = config.tools?.media?.auditEvents ?? true;
+        document.getElementById('setting-media-quarantine-unknown').checked = config.tools?.media?.quarantineUnknownMime ?? true;
+        document.getElementById('setting-media-reject-over-limit').checked = config.tools?.media?.rejectOverLimit ?? true;
+        document.getElementById('setting-media-max-bytes').value = config.tools?.media?.maxBytesPerItem ?? 26214400;
+        document.getElementById('setting-media-max-items').value = config.tools?.media?.maxItemsPerMessage ?? 10;
+        document.getElementById('setting-media-ttl-minutes').value = config.tools?.media?.tempTtlMinutes ?? 60;
+        document.getElementById('setting-media-download-timeout').value = config.tools?.media?.downloadTimeoutSec ?? 30;
+        document.getElementById('setting-media-processing-timeout').value = config.tools?.media?.processingTimeoutSec ?? 120;
+        document.getElementById('setting-media-enable-ocr').checked = config.tools?.media?.enableOcr ?? false;
+        document.getElementById('setting-media-enable-transcription').checked = config.tools?.media?.enableTranscription ?? false;
+        document.getElementById('setting-media-allowed-mime').value = (config.tools?.media?.allowedMimeTypes || []).join(', ');
+        document.getElementById('setting-media-ocr-provider').value = config.tools?.media?.ocrProvider || 'openai';
+        document.getElementById('setting-media-ocr-model').value = config.tools?.media?.ocrModel || 'gpt-4o-mini';
+        document.getElementById('setting-media-ocr-api-base').value = config.tools?.media?.ocrApiBase || '';
+        document.getElementById('setting-media-transcription-provider').value = config.tools?.media?.transcriptionProvider || 'openai';
+        document.getElementById('setting-media-transcription-model').value = config.tools?.media?.transcriptionModel || 'gpt-4o-mini-transcribe';
+        document.getElementById('setting-media-transcription-api-base').value = config.tools?.media?.transcriptionApiBase || '';
+        document.getElementById('setting-media-default-language').value = config.tools?.media?.defaultLanguage || '';
         await loadExecApprovals();
+        await loadMediaAssets();
 
     } catch (err) {
         showToast('Failed to load settings');
@@ -1159,6 +1185,35 @@ async function saveSettings() {
         const allowlistRaw = document.getElementById('setting-exec-allowlist').value || '';
         update.Tools.Exec.Allowlist = parseLineList(allowlistRaw);
 
+        // Media pipeline settings
+        update.Tools.Media = {
+            Enabled: document.getElementById('setting-media-enabled').checked,
+            AuditEvents: document.getElementById('setting-media-audit-events').checked,
+            QuarantineUnknownMime: document.getElementById('setting-media-quarantine-unknown').checked,
+            RejectOverLimit: document.getElementById('setting-media-reject-over-limit').checked,
+            EnableOcr: document.getElementById('setting-media-enable-ocr').checked,
+            EnableTranscription: document.getElementById('setting-media-enable-transcription').checked,
+            AllowedMimeTypes: parseCsvList(document.getElementById('setting-media-allowed-mime').value || ''),
+            OcrProvider: (document.getElementById('setting-media-ocr-provider').value || 'openai').trim(),
+            OcrModel: (document.getElementById('setting-media-ocr-model').value || 'gpt-4o-mini').trim(),
+            OcrApiBase: (document.getElementById('setting-media-ocr-api-base').value || '').trim(),
+            TranscriptionProvider: (document.getElementById('setting-media-transcription-provider').value || 'openai').trim(),
+            TranscriptionModel: (document.getElementById('setting-media-transcription-model').value || 'gpt-4o-mini-transcribe').trim(),
+            TranscriptionApiBase: (document.getElementById('setting-media-transcription-api-base').value || '').trim(),
+            DefaultLanguage: (document.getElementById('setting-media-default-language').value || '').trim(),
+        };
+
+        const maxBytes = parseInt(document.getElementById('setting-media-max-bytes').value);
+        if (!isNaN(maxBytes)) update.Tools.Media.MaxBytesPerItem = maxBytes;
+        const maxItems = parseInt(document.getElementById('setting-media-max-items').value);
+        if (!isNaN(maxItems)) update.Tools.Media.MaxItemsPerMessage = maxItems;
+        const ttlMin = parseInt(document.getElementById('setting-media-ttl-minutes').value);
+        if (!isNaN(ttlMin)) update.Tools.Media.TempTtlMinutes = ttlMin;
+        const dlTimeout = parseInt(document.getElementById('setting-media-download-timeout').value);
+        if (!isNaN(dlTimeout)) update.Tools.Media.DownloadTimeoutSec = dlTimeout;
+        const procTimeout = parseInt(document.getElementById('setting-media-processing-timeout').value);
+        if (!isNaN(procTimeout)) update.Tools.Media.ProcessingTimeoutSec = procTimeout;
+
         update.Tools.RestrictToWorkspace = document.getElementById('setting-restrict-workspace').checked;
 
         const response = await fetch(API.config, {
@@ -1187,10 +1242,11 @@ async function saveSettings() {
 }
 
 function parseCsvList(raw) {
-    return (raw || '')
+    const values = (raw || '')
         .split(',')
         .map(x => x.trim())
         .filter(Boolean);
+    return [...new Set(values)];
 }
 
 function parseLineList(raw) {
@@ -1266,6 +1322,69 @@ window.resolveExecApproval = async function(id, decision) {
         showToast(`Failed to resolve approval: ${err.message}`);
     }
 };
+
+async function loadMediaAssets() {
+    const list = document.getElementById('media-assets-list');
+    const status = document.getElementById('media-assets-status');
+    if (!list) return;
+
+    try {
+        const [assetsRes, statsRes] = await Promise.all([
+            fetch(`${API.mediaAssets}?limit=25`),
+            fetch(API.mediaStats),
+        ]);
+        const assetsData = await assetsRes.json();
+        const stats = await statsRes.json();
+        const assets = assetsData.assets || [];
+
+        if (status) {
+            status.textContent = `${stats.activeAssets || 0} active / ${stats.totalAssets || 0} total`;
+            status.style.color = 'var(--text-secondary)';
+        }
+
+        if (assets.length === 0) {
+            list.innerHTML = '<div class="empty-state">No media assets tracked yet.</div>';
+            return;
+        }
+
+        list.innerHTML = assets.map(asset => `
+            <div class="exec-approval-card">
+                <div class="exec-approval-header">
+                    <span class="exec-approval-id">${escapeHtml((asset.id || '').slice(0, 10))}</span>
+                    <span class="badge ${asset.policyDecision === 'allow' ? 'badge-success' : asset.policyDecision === 'quarantine' ? 'badge-warning' : 'badge-error'}">${escapeHtml(asset.policyDecision || 'unknown')}</span>
+                </div>
+                <div class="exec-approval-command"><code>${escapeHtml(asset.fileName || '(unnamed)')} • ${escapeHtml(asset.mimeType || 'unknown')}</code></div>
+                <div class="exec-approval-meta">
+                    <span>State: ${escapeHtml(asset.state || '-')}</span>
+                    <span>Size: ${Number(asset.sizeBytes || 0).toLocaleString()} bytes</span>
+                    <span>Channel: ${escapeHtml(asset.channel || '-')}</span>
+                    <span>Expires: ${asset.expiresAtUtc ? new Date(asset.expiresAtUtc).toLocaleString() : '-'}</span>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        if (status) {
+            status.textContent = 'Failed to load media assets';
+            status.style.color = 'var(--error)';
+        }
+        list.innerHTML = '<div class="empty-state">Failed to load media assets.</div>';
+    }
+}
+
+async function cleanupMediaAssets() {
+    try {
+        const response = await fetch(API.mediaCleanup, { method: 'POST' });
+        const result = await response.json();
+        if (!response.ok || result.error) {
+            showToast(result.message || 'Failed to cleanup media');
+            return;
+        }
+        showToast(`Media cleanup complete (${result.removed || 0} removed)`);
+        await loadMediaAssets();
+    } catch (err) {
+        showToast(`Failed to cleanup media: ${err.message}`);
+    }
+}
 
 // ============================================================================
 // Cron Jobs
@@ -1514,6 +1633,27 @@ function renderStatus(data) {
         </div>
     `;
 
+    const mediaByState = data.media?.byState
+        ? Object.entries(data.media.byState).map(([k, v]) => `${k}:${v}`).join(', ')
+        : '';
+    const mediaCard = `
+        <div class="status-card">
+            <h3>🖼 Media Pipeline</h3>
+            <div class="status-row">
+                <span class="status-label">Enabled</span>
+                <span>${data.media?.enabled ? '<span class="badge badge-success">On</span>' : '<span class="badge badge-neutral">Off</span>'}</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Assets</span>
+                <span class="status-value">${data.media?.activeAssets ?? 0} active / ${data.media?.totalAssets ?? 0} total</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">By State</span>
+                <span class="status-value">${escapeHtml(mediaByState || 'n/a')}</span>
+            </div>
+        </div>
+    `;
+
     // ── System info card ──────────────────────────────────────
     const sysCard = `
         <div class="status-card">
@@ -1540,6 +1680,7 @@ function renderStatus(data) {
                 <h3>📡 Channels</h3>
                 ${channelRows || '<div class="empty-state">No channels configured</div>'}
             </div>
+            ${mediaCard}
             ${cronCard}
             ${sysCard}
         </div>

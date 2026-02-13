@@ -12,6 +12,7 @@ using Sharpbot.Config;
 using Sharpbot.Cron;
 using Sharpbot.Database;
 using Sharpbot.Logging;
+using Sharpbot.Media;
 using Sharpbot.Plugins;
 using Sharpbot.Services;
 using Sharpbot.Session;
@@ -74,6 +75,21 @@ builder.Services.AddSingleton<CronService>(sp =>
     new CronService(db, sp.GetRequiredService<ILoggerFactory>().CreateLogger("cron")));
 
 builder.Services.AddSingleton(sp => new ExecApprovalManager(sharpbotConfig.Tools.Exec));
+builder.Services.AddSingleton<IOcrProcessor>(sp =>
+{
+    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("media-ocr");
+    return MediaProcessorFactory.CreateOcrProcessor(sharpbotConfig, logger);
+});
+builder.Services.AddSingleton<ITranscriptionProcessor>(sp =>
+{
+    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("media-transcription");
+    return MediaProcessorFactory.CreateTranscriptionProcessor(sharpbotConfig, logger);
+});
+builder.Services.AddSingleton(sp =>
+    new MediaPipelineService(
+        sharpbotConfig.Tools.Media,
+        sp.GetRequiredService<IOcrProcessor>(),
+        sp.GetRequiredService<ITranscriptionProcessor>()));
 
 // ── Logging configuration ────────────────────────────────────────────────────
 // Suppress noisy ASP.NET Core HTTP request/response logs from all providers
@@ -149,6 +165,7 @@ app.MapLogsApi();
 app.MapUsageApi();
 app.MapMemoryApi();
 app.MapExecApprovalsApi();
+app.MapMediaApi();
 app.MapSlackEventsApi();
 
 // ── Root redirect ───────────────────────────────────────────────────────────

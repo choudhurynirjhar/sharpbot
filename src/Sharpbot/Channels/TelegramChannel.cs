@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 using Sharpbot.Session;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
@@ -21,6 +22,7 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
     private readonly TelegramConfig _config;
     private readonly SessionManager? _sessionManager;
     private readonly string? _groqApiKey;
+    private readonly MediaPipelineService? _mediaPipeline;
     private TelegramBotClient? _bot;
     private CancellationTokenSource? _cts;
     private readonly Dictionary<string, CancellationTokenSource> _typingTasks = [];
@@ -30,12 +32,14 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
         MessageBus bus,
         SessionManager? sessionManager = null,
         string? groqApiKey = null,
+        MediaPipelineService? mediaPipeline = null,
         ILogger? logger = null)
         : base(config, bus, logger)
     {
         _config = config;
         _sessionManager = sessionManager;
         _groqApiKey = groqApiKey;
+        _mediaPipeline = mediaPipeline;
     }
 
     public override async Task StartAsync()
@@ -169,6 +173,7 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
 
         var user = msg.From;
         var chatId = msg.Chat.Id;
+        var strChatId = chatId.ToString();
 
         // Handle commands
         if (msg.Text is not null)
@@ -198,6 +203,7 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
         // Build content from text and/or media
         var contentParts = new List<string>();
         var mediaPaths = new List<string>();
+        var mediaAssetIds = new List<string>();
 
         if (!string.IsNullOrEmpty(msg.Text))
             contentParts.Add(msg.Text);
@@ -207,26 +213,41 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
         // Handle media files
         string? fileId = null;
         string mediaType = "";
+        string mimeType = "";
+        string fileName = "attachment";
+        long sizeBytes = 0;
 
         if (msg.Photo is { Length: > 0 })
         {
             fileId = msg.Photo[^1].FileId; // Largest photo
             mediaType = "image";
+            mimeType = "image/jpeg";
+            fileName = $"telegram_photo_{fileId[..Math.Min(12, fileId.Length)]}.jpg";
+            sizeBytes = msg.Photo[^1].FileSize ?? 0;
         }
         else if (msg.Voice is not null)
         {
             fileId = msg.Voice.FileId;
             mediaType = "voice";
+            mimeType = "audio/ogg";
+            fileName = $"telegram_voice_{fileId[..Math.Min(12, fileId.Length)]}.ogg";
+            sizeBytes = msg.Voice.FileSize ?? 0;
         }
         else if (msg.Audio is not null)
         {
             fileId = msg.Audio.FileId;
             mediaType = "audio";
+            mimeType = msg.Audio.MimeType ?? "audio/mpeg";
+            fileName = msg.Audio.FileName ?? $"telegram_audio_{fileId[..Math.Min(12, fileId.Length)]}.mp3";
+            sizeBytes = msg.Audio.FileSize ?? 0;
         }
         else if (msg.Document is not null)
         {
             fileId = msg.Document.FileId;
             mediaType = "file";
+            mimeType = msg.Document.MimeType ?? "application/octet-stream";
+            fileName = msg.Document.FileName ?? $"telegram_file_{fileId[..Math.Min(12, fileId.Length)]}";
+            sizeBytes = msg.Document.FileSize ?? 0;
         }
 
         // Download media if present
@@ -243,22 +264,67 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
                 await using var fs = System.IO.File.Create(filePath);
                 await _bot.GetInfoAndDownloadFile(fileId, fs);
 
+                var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                {
+                    Channel = ChannelName,
+                    ChatId = strChatId,
+                    MimeType = mimeType,
+                    FileName = fileName,
+                    SizeBytes = sizeBytes > 0 ? sizeBytes : fs.Length,
+                    SourceType = "telegram",
+                    SourceRef = fileId,
+                    LocalPath = filePath,
+                    ItemCountInMessage = 1,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["message_id"] = msg.MessageId.ToString(),
+                        ["user_id"] = user.Id.ToString(),
+                        ["media_type"] = mediaType,
+                    },
+                }, actor: "channel/telegram");
+
                 mediaPaths.Add(filePath);
-                contentParts.Add($"[{mediaType}: {filePath}]");
+                if (asset is not null)
+                {
+                    mediaAssetIds.Add(asset.Id);
+                    contentParts.Add($"[{mediaType}: {filePath}] [media_asset_id: {asset.Id}]");
+                }
+                else
+                    contentParts.Add($"[{mediaType}: {filePath}]");
 
                 Logger?.LogDebug("Downloaded {MediaType} to {Path}", mediaType, filePath);
             }
             catch (Exception e)
             {
                 Logger?.LogError(e, "Failed to download media");
-                contentParts.Add($"[{mediaType}: download failed]");
+                var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                {
+                    Channel = ChannelName,
+                    ChatId = strChatId,
+                    MimeType = mimeType,
+                    FileName = fileName,
+                    SizeBytes = sizeBytes,
+                    SourceType = "telegram",
+                    SourceRef = fileId,
+                    ItemCountInMessage = 1,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["message_id"] = msg.MessageId.ToString(),
+                        ["user_id"] = user.Id.ToString(),
+                        ["media_type"] = mediaType,
+                        ["download_status"] = "failed",
+                        ["failure_code"] = "MEDIA_DOWNLOAD_FAILED",
+                    },
+                }, actor: "channel/telegram");
+                contentParts.Add(asset is null
+                    ? $"[{mediaType}: download failed]"
+                    : $"[{mediaType}: download failed] [media_asset_id: {asset.Id}]");
+                if (asset is not null) mediaAssetIds.Add(asset.Id);
             }
         }
 
         var content = contentParts.Count > 0 ? string.Join("\n", contentParts) : "[empty message]";
         Logger?.LogDebug("Telegram message from {Sender}: {Content}", senderId, content.Length > 50 ? content[..50] + "..." : content);
-
-        var strChatId = chatId.ToString();
 
         // Start typing indicator before processing
         StartTyping(strChatId);
@@ -277,6 +343,7 @@ public sealed class TelegramChannel : BaseChannel, IDisposable
                 ["username"] = user.Username ?? "",
                 ["first_name"] = user.FirstName ?? "",
                 ["is_group"] = msg.Chat.Type != ChatType.Private,
+                ["media_asset_ids"] = mediaAssetIds,
             });
     }
 

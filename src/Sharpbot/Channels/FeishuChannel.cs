@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 
 namespace Sharpbot.Channels;
 
@@ -35,6 +36,7 @@ public sealed class FeishuChannel : BaseChannel, IDisposable
     };
 
     private readonly FeishuConfig _config;
+    private readonly MediaPipelineService? _mediaPipeline;
     private HttpClient? _http;
     private CancellationTokenSource? _cts;
 
@@ -53,10 +55,15 @@ public sealed class FeishuChannel : BaseChannel, IDisposable
         @"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
         RegexOptions.Multiline | RegexOptions.Compiled);
 
-    public FeishuChannel(FeishuConfig config, MessageBus bus, ILogger? logger = null)
+    public FeishuChannel(
+        FeishuConfig config,
+        MessageBus bus,
+        MediaPipelineService? mediaPipeline = null,
+        ILogger? logger = null)
         : base(config, bus, logger)
     {
         _config = config;
+        _mediaPipeline = mediaPipeline;
     }
 
     public override async Task StartAsync()
@@ -218,6 +225,7 @@ public sealed class FeishuChannel : BaseChannel, IDisposable
 
             // Parse message content
             string content;
+            var mediaAssetIds = new List<string>();
             if (msgType == "text")
             {
                 try
@@ -235,6 +243,56 @@ public sealed class FeishuChannel : BaseChannel, IDisposable
             else
             {
                 content = MsgTypeMap.GetValueOrDefault(msgType, $"[{msgType}]");
+
+                // Register non-text messages as normalized media placeholders.
+                var sourceRef = messageId;
+                try
+                {
+                    var msgContent = message.GetProperty("content").GetString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(msgContent))
+                    {
+                        using var contentDoc = JsonDocument.Parse(msgContent);
+                        var root = contentDoc.RootElement;
+                        sourceRef = root.TryGetProperty("file_key", out var fileKey) ? fileKey.GetString() ?? sourceRef : sourceRef;
+                        sourceRef = root.TryGetProperty("image_key", out var imageKey) ? imageKey.GetString() ?? sourceRef : sourceRef;
+                    }
+                }
+                catch
+                {
+                    // best effort only
+                }
+
+                var mimeType = msgType switch
+                {
+                    "image" => "image/*",
+                    "audio" => "audio/*",
+                    "file" => "application/octet-stream",
+                    _ => "application/octet-stream",
+                };
+
+                var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                {
+                    Channel = ChannelName,
+                    ChatId = chatId,
+                    MimeType = mimeType,
+                    FileName = $"{msgType}-{messageId}",
+                    SizeBytes = 0,
+                    SourceType = "feishu",
+                    SourceRef = sourceRef,
+                    ItemCountInMessage = 1,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["message_id"] = messageId,
+                        ["msg_type"] = msgType,
+                        ["chat_type"] = chatType,
+                    },
+                }, actor: "channel/feishu");
+
+                if (asset is not null)
+                {
+                    mediaAssetIds.Add(asset.Id);
+                    content += $" [media_asset_id: {asset.Id}]";
+                }
             }
 
             if (string.IsNullOrEmpty(content)) return null;
@@ -251,6 +309,7 @@ public sealed class FeishuChannel : BaseChannel, IDisposable
                     ["message_id"] = messageId,
                     ["chat_type"] = chatType,
                     ["msg_type"] = msgType,
+                    ["media_asset_ids"] = mediaAssetIds,
                 });
         }
         catch (Exception e)

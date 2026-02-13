@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 
 namespace Sharpbot.Channels;
 
@@ -20,6 +21,7 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
     private const int MaxAttachmentBytes = 20 * 1024 * 1024; // 20 MB
 
     private readonly DiscordConfig _config;
+    private readonly MediaPipelineService? _mediaPipeline;
     private ClientWebSocket? _ws;
     private int? _seq;
     private CancellationTokenSource? _cts;
@@ -27,10 +29,15 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
     private readonly Dictionary<string, CancellationTokenSource> _typingTasks = [];
     private HttpClient? _http;
 
-    public DiscordChannel(DiscordConfig config, MessageBus bus, ILogger? logger = null)
+    public DiscordChannel(
+        DiscordConfig config,
+        MessageBus bus,
+        MediaPipelineService? mediaPipeline = null,
+        ILogger? logger = null)
         : base(config, bus, logger)
     {
         _config = config;
+        _mediaPipeline = mediaPipeline;
     }
 
     public override async Task StartAsync()
@@ -293,6 +300,7 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
             contentParts.Add(content);
 
         var mediaPaths = new List<string>();
+        var mediaAssetIds = new List<string>();
         var mediaDir = Utils.Helpers.GetMediaPath();
 
         // Handle attachments
@@ -305,11 +313,31 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
                 var filename = attachment.TryGetProperty("filename", out var fnEl) ? fnEl.GetString() ?? "attachment" : "attachment";
                 var size = attachment.TryGetProperty("size", out var sizeEl) ? sizeEl.GetInt64() : 0;
                 var attachId = attachment.TryGetProperty("id", out var aidEl) ? aidEl.GetString() ?? "file" : "file";
+                var mimeType = attachment.TryGetProperty("content_type", out var mtEl) ? mtEl.GetString() ?? "" : "";
 
                 if (url is null || _http is null) continue;
 
                 if (size > MaxAttachmentBytes)
                 {
+                    var overLimitAsset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                    {
+                        Channel = ChannelName,
+                        ChatId = channelId,
+                        MimeType = mimeType,
+                        FileName = filename,
+                        SizeBytes = size,
+                        SourceType = "discord",
+                        SourceRef = attachId,
+                        ItemCountInMessage = attachments.GetArrayLength(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["message_id"] = payload.TryGetProperty("id", out var pId) ? pId.GetString() ?? "" : "",
+                            ["download_status"] = "skipped_too_large",
+                            ["failure_code"] = "MEDIA_ATTACHMENT_TOO_LARGE",
+                        },
+                    }, actor: "channel/discord");
+                    if (overLimitAsset is not null)
+                        mediaAssetIds.Add(overLimitAsset.Id);
                     contentParts.Add($"[attachment: {filename} - too large]");
                     continue;
                 }
@@ -323,13 +351,66 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
                     resp.EnsureSuccessStatusCode();
                     var bytes = await resp.Content.ReadAsByteArrayAsync();
                     await System.IO.File.WriteAllBytesAsync(filePath, bytes);
+
+                    var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                    {
+                        Channel = ChannelName,
+                        ChatId = channelId,
+                        MimeType = string.IsNullOrWhiteSpace(mimeType)
+                            ? (resp.Content.Headers.ContentType?.MediaType ?? "")
+                            : mimeType,
+                        FileName = filename,
+                        SizeBytes = size > 0 ? size : bytes.LongLength,
+                        SourceType = "discord",
+                        SourceRef = attachId,
+                        LocalPath = filePath,
+                        ItemCountInMessage = attachments.GetArrayLength(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["message_id"] = payload.TryGetProperty("id", out var pId) ? pId.GetString() ?? "" : "",
+                        },
+                    }, actor: "channel/discord");
+
                     mediaPaths.Add(filePath);
-                    contentParts.Add($"[attachment: {filePath}]");
+                    if (asset is not null)
+                    {
+                        mediaAssetIds.Add(asset.Id);
+                        contentParts.Add($"[attachment: {filePath}] [media_asset_id: {asset.Id}]");
+                    }
+                    else
+                    {
+                        contentParts.Add($"[attachment: {filePath}]");
+                    }
                 }
                 catch (Exception e)
                 {
                     Logger?.LogWarning(e, "Failed to download Discord attachment");
-                    contentParts.Add($"[attachment: {filename} - download failed]");
+                    var failedAsset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+                    {
+                        Channel = ChannelName,
+                        ChatId = channelId,
+                        MimeType = mimeType,
+                        FileName = filename,
+                        SizeBytes = size,
+                        SourceType = "discord",
+                        SourceRef = attachId,
+                        ItemCountInMessage = attachments.GetArrayLength(),
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["message_id"] = payload.TryGetProperty("id", out var pId) ? pId.GetString() ?? "" : "",
+                            ["download_status"] = "failed",
+                            ["failure_code"] = "MEDIA_DOWNLOAD_FAILED",
+                        },
+                    }, actor: "channel/discord");
+                    if (failedAsset is not null)
+                    {
+                        mediaAssetIds.Add(failedAsset.Id);
+                        contentParts.Add($"[attachment: {filename} - download failed] [media_asset_id: {failedAsset.Id}]");
+                    }
+                    else
+                    {
+                        contentParts.Add($"[attachment: {filename} - download failed]");
+                    }
                 }
             }
         }
@@ -352,6 +433,7 @@ public sealed class DiscordChannel : BaseChannel, IDisposable
         {
             ["message_id"] = messageId,
         };
+        if (mediaAssetIds.Count > 0) metadata["media_asset_ids"] = mediaAssetIds;
         if (guildId is not null) metadata["guild_id"] = guildId;
         if (replyTo is not null) metadata["reply_to"] = replyTo;
 

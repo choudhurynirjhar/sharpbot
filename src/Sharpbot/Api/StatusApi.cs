@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Sharpbot.Config;
+using Sharpbot.Media;
 using Sharpbot.Providers;
 using Sharpbot.Services;
 
@@ -13,7 +14,7 @@ public static class StatusApi
         app.MapGet("/api/status", GetStatus).WithTags("Status");
     }
 
-    private static IResult GetStatus(SharpbotConfig config, SharpbotHostedService gateway)
+    private static IResult GetStatus(SharpbotConfig config, SharpbotHostedService gateway, MediaPipelineService mediaPipeline)
     {
         var configPath = ConfigLoader.GetConfigPath();
         var workspace = config.WorkspacePath;
@@ -62,6 +63,7 @@ public static class StatusApi
 
         // Sessions
         var sessionCount = gateway.SessionManager.ListSessions().Count;
+        var mediaStats = mediaPipeline.GetStats();
 
         return Results.Json(new
         {
@@ -82,6 +84,15 @@ public static class StatusApi
             tools,
             toolCount = tools.Count,
             sessionCount,
+            media = new
+            {
+                enabled = config.Tools.Media.Enabled,
+                totalAssets = mediaStats.TotalAssets,
+                activeAssets = mediaStats.ActiveAssets,
+                expiredAssets = mediaStats.ExpiredAssets,
+                byState = mediaStats.ByState,
+                byDecision = mediaStats.ByDecision,
+            },
             cron = cronStatus,
         });
     }

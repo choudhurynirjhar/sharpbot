@@ -5,6 +5,7 @@ using Sharpbot.Channels;
 using Sharpbot.Config;
 using Sharpbot.Cron;
 using Sharpbot.Heartbeat;
+using Sharpbot.Media;
 using Sharpbot.Plugins;
 using Sharpbot.Providers;
 using Sharpbot.Session;
@@ -29,6 +30,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly UsageStore _usageStore;
     private readonly ExecApprovalManager _execApprovalManager;
+    private readonly MediaPipelineService _mediaPipeline;
 
     private AgentLoop? _agentLoop;
     private Sharpbot.Agent.SemanticMemoryStore? _semanticMemory;
@@ -50,6 +52,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         Database.SharpbotDb db,
         PluginLoader pluginLoader,
         ExecApprovalManager execApprovalManager,
+        MediaPipelineService mediaPipeline,
         UsageStore usageStore,
         ILogger<SharpbotHostedService> logger,
         ILoggerFactory loggerFactory)
@@ -61,6 +64,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         _db = db;
         _pluginLoader = pluginLoader;
         _execApprovalManager = execApprovalManager;
+        _mediaPipeline = mediaPipeline;
         _usageStore = usageStore;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -203,6 +207,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             _config, _bus,
             logger: _loggerFactory.CreateLogger("channels"),
             sessionManager: _sessionManager,
+            mediaPipeline: _mediaPipeline,
             loggerFactory: _loggerFactory);
 
         // Register plugin-contributed channels

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 
 namespace Sharpbot.Channels;
 
@@ -18,14 +19,20 @@ public sealed class WhatsAppChannel : BaseChannel, IDisposable
     public override string ChannelName => "whatsapp";
 
     private readonly WhatsAppConfig _config;
+    private readonly MediaPipelineService? _mediaPipeline;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
     private volatile bool _connected;
 
-    public WhatsAppChannel(WhatsAppConfig config, MessageBus bus, ILogger? logger = null)
+    public WhatsAppChannel(
+        WhatsAppConfig config,
+        MessageBus bus,
+        MediaPipelineService? mediaPipeline = null,
+        ILogger? logger = null)
         : base(config, bus, logger)
     {
         _config = config;
+        _mediaPipeline = mediaPipeline;
     }
 
     public override async Task StartAsync()
@@ -198,15 +205,38 @@ public sealed class WhatsAppChannel : BaseChannel, IDisposable
         // Extract the user ID
         var userId = !string.IsNullOrEmpty(pn) ? pn : sender;
         var senderId = userId.Contains('@') ? userId.Split('@')[0] : userId;
+        var messageId = data.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
 
         // Voice messages not directly supported from bridge yet
+        var mediaAssetIds = new List<string>();
         if (content == "[Voice Message]")
         {
             Logger?.LogInformation("Voice message received from {Sender}, transcription not available via bridge", senderId);
             content = "[Voice Message: Transcription not available for WhatsApp yet]";
+            var asset = _mediaPipeline?.RegisterInbound(new MediaIngestRequest
+            {
+                Channel = ChannelName,
+                ChatId = sender,
+                MimeType = "audio/ogg",
+                FileName = "voice-note.ogg",
+                SizeBytes = 0,
+                SourceType = "whatsapp",
+                SourceRef = messageId ?? "",
+                ItemCountInMessage = 1,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["sender_id"] = senderId,
+                    ["download_status"] = "not_supported_bridge",
+                    ["failure_code"] = "MEDIA_SOURCE_UNSUPPORTED",
+                },
+            }, actor: "channel/whatsapp");
+            if (asset is not null)
+            {
+                mediaAssetIds.Add(asset.Id);
+                content += $" [media_asset_id: {asset.Id}]";
+            }
         }
 
-        var messageId = data.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
         var timestamp = data.TryGetProperty("timestamp", out var tsEl) && tsEl.ValueKind == JsonValueKind.Number
             ? (object)tsEl.GetInt64() : null;
         var isGroup = data.TryGetProperty("isGroup", out var groupEl) && groupEl.ValueKind == JsonValueKind.True;
@@ -215,6 +245,7 @@ public sealed class WhatsAppChannel : BaseChannel, IDisposable
         if (messageId is not null) metadata["message_id"] = messageId;
         if (timestamp is not null) metadata["timestamp"] = timestamp;
         metadata["is_group"] = isGroup;
+        if (mediaAssetIds.Count > 0) metadata["media_asset_ids"] = mediaAssetIds;
 
         await HandleMessageAsync(
             senderId: senderId,

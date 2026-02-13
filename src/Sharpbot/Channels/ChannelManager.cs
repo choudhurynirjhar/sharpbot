@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Sharpbot.Bus;
 using Sharpbot.Config;
+using Sharpbot.Media;
 using Sharpbot.Session;
 
 namespace Sharpbot.Channels;
@@ -20,17 +21,20 @@ public sealed class ChannelManager : IDisposable
     private Task? _dispatchTask;
     private CancellationTokenSource? _cts;
     private readonly ILogger? _logger;
+    private readonly MediaPipelineService? _mediaPipeline;
 
     public ChannelManager(
         SharpbotConfig config,
         MessageBus bus,
         ILogger? logger = null,
         SessionManager? sessionManager = null,
+        MediaPipelineService? mediaPipeline = null,
         ILoggerFactory? loggerFactory = null)
     {
         _config = config;
         _bus = bus;
         _logger = logger;
+        _mediaPipeline = mediaPipeline;
 
         InitChannels(sessionManager, loggerFactory);
     }
@@ -49,6 +53,7 @@ public sealed class ChannelManager : IDisposable
                     sessionManager: sessionManager,
                     groqApiKey: !string.IsNullOrEmpty(_config.Providers.Groq.ApiKey)
                         ? _config.Providers.Groq.ApiKey : null,
+                    mediaPipeline: _mediaPipeline,
                     logger: loggerFactory?.CreateLogger("telegram"));
                 RegisterChannel("telegram", channel);
                 _logger?.LogInformation("Telegram channel enabled");
@@ -67,6 +72,7 @@ public sealed class ChannelManager : IDisposable
                 var channel = new WhatsAppChannel(
                     _config.Channels.WhatsApp,
                     _bus,
+                    mediaPipeline: _mediaPipeline,
                     logger: loggerFactory?.CreateLogger("whatsapp"));
                 RegisterChannel("whatsapp", channel);
                 _logger?.LogInformation("WhatsApp channel enabled");
@@ -85,6 +91,7 @@ public sealed class ChannelManager : IDisposable
                 var channel = new DiscordChannel(
                     _config.Channels.Discord,
                     _bus,
+                    mediaPipeline: _mediaPipeline,
                     logger: loggerFactory?.CreateLogger("discord"));
                 RegisterChannel("discord", channel);
                 _logger?.LogInformation("Discord channel enabled");
@@ -103,6 +110,7 @@ public sealed class ChannelManager : IDisposable
                 var channel = new FeishuChannel(
                     _config.Channels.Feishu,
                     _bus,
+                    mediaPipeline: _mediaPipeline,
                     logger: loggerFactory?.CreateLogger("feishu"));
                 RegisterChannel("feishu", channel);
                 _logger?.LogInformation("Feishu channel enabled");
@@ -121,6 +129,7 @@ public sealed class ChannelManager : IDisposable
                 var channel = new SlackChannel(
                     _config.Channels.Slack,
                     _bus,
+                    mediaPipeline: _mediaPipeline,
                     logger: loggerFactory?.CreateLogger("slack"));
                 RegisterChannel("slack", channel);
                 _logger?.LogInformation("Slack channel enabled (mode: {Mode})", _config.Channels.Slack.Mode);
