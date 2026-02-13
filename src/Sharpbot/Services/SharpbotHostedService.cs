@@ -28,6 +28,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
     private readonly ILogger<SharpbotHostedService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly UsageStore _usageStore;
+    private readonly ExecApprovalManager _execApprovalManager;
 
     private AgentLoop? _agentLoop;
     private Sharpbot.Agent.SemanticMemoryStore? _semanticMemory;
@@ -48,6 +49,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         CronService cronService,
         Database.SharpbotDb db,
         PluginLoader pluginLoader,
+        ExecApprovalManager execApprovalManager,
         UsageStore usageStore,
         ILogger<SharpbotHostedService> logger,
         ILoggerFactory loggerFactory)
@@ -58,6 +60,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
         _cronService = cronService;
         _db = db;
         _pluginLoader = pluginLoader;
+        _execApprovalManager = execApprovalManager;
         _usageStore = usageStore;
         _logger = logger;
         _loggerFactory = loggerFactory;
@@ -151,6 +154,7 @@ public sealed class SharpbotHostedService : IHostedService, IDisposable
             MaxContextTokens = _config.Agents.Defaults.MaxContextTokens,
             BraveApiKey = string.IsNullOrEmpty(_config.Tools.Web.Search.ApiKey) ? null : _config.Tools.Web.Search.ApiKey,
             ExecConfig = _config.Tools.Exec,
+            ExecApprovalManager = _execApprovalManager,
             CronService = _cronService,
             RestrictToWorkspace = _config.Tools.RestrictToWorkspace,
             SessionManager = _sessionManager,

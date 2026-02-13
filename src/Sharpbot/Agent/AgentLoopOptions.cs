@@ -39,6 +39,9 @@ public sealed record AgentLoopOptions
     /// <summary>Shell exec tool configuration.</summary>
     public ExecToolConfig ExecConfig { get; init; } = new();
 
+    /// <summary>Exec approval manager used by the exec tool.</summary>
+    public ExecApprovalManager? ExecApprovalManager { get; init; }
+
     /// <summary>Cron service for scheduled tasks (optional).</summary>
     public CronService? CronService { get; init; }
 

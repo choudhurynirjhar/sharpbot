@@ -175,6 +175,24 @@ public class WebToolsConfig
 /// <summary>Shell exec tool configuration.</summary>
 public class ExecToolConfig
 {
+    /// <summary>Security mode: deny, allowlist, or full (default: allowlist).</summary>
+    public string Security { get; set; } = "allowlist";
+
+    /// <summary>Approval mode: off, on-miss, always (default: on-miss).</summary>
+    public string Ask { get; set; } = "on-miss";
+
+    /// <summary>Fallback if approval times out/unavailable: deny, allowlist, full (default: deny).</summary>
+    public string AskFallback { get; set; } = "deny";
+
+    /// <summary>Approval wait timeout in seconds (default: 120).</summary>
+    public int ApprovalTimeoutSec { get; set; } = 120;
+
+    /// <summary>Allowlisted executable paths/patterns for allowlist security mode.</summary>
+    public List<string> Allowlist { get; set; } = [];
+
+    /// <summary>Safe binary names that may run without explicit allowlist entry.</summary>
+    public List<string> SafeBins { get; set; } = ["jq", "grep", "cut", "sort", "uniq", "head", "tail", "tr", "wc"];
+
     /// <summary>Foreground command timeout in seconds (default: 60).</summary>
     public int Timeout { get; set; } = 60;
 

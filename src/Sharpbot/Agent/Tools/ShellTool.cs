@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using Sharpbot.Agent;
 
 namespace Sharpbot.Agent.Tools;
 
@@ -12,6 +14,12 @@ public sealed class ExecTool : ToolBase
     private readonly IReadOnlyList<Regex> _denyPatterns;
     private readonly bool _restrictToWorkspace;
     private readonly ProcessSessionManager? _processManager;
+    private readonly string _security;
+    private readonly string _ask;
+    private readonly string _askFallback;
+    private readonly int _approvalTimeoutSec;
+    private readonly HashSet<string> _safeBins;
+    private readonly ExecApprovalManager? _approvalManager;
 
     /// <summary>Pre-compiled deny patterns — avoids recompiling on every <see cref="ExecuteAsync"/> call.</summary>
     private static readonly Regex[] DefaultDenyPatterns =
@@ -32,7 +40,13 @@ public sealed class ExecTool : ToolBase
         string? workingDir = null,
         IReadOnlyList<Regex>? denyPatterns = null,
         bool restrictToWorkspace = false,
-        ProcessSessionManager? processManager = null)
+        ProcessSessionManager? processManager = null,
+        string security = "allowlist",
+        string ask = "on-miss",
+        string askFallback = "deny",
+        int approvalTimeoutSec = 120,
+        IEnumerable<string>? safeBins = null,
+        ExecApprovalManager? approvalManager = null)
     {
         _timeout = timeout;
         _defaultYieldMs = defaultYieldMs;
@@ -40,6 +54,12 @@ public sealed class ExecTool : ToolBase
         _restrictToWorkspace = restrictToWorkspace;
         _denyPatterns = denyPatterns ?? DefaultDenyPatterns;
         _processManager = processManager;
+        _security = NormalizeSecurity(security);
+        _ask = NormalizeAsk(ask);
+        _askFallback = NormalizeSecurity(askFallback);
+        _approvalTimeoutSec = Math.Max(5, approvalTimeoutSec);
+        _safeBins = new HashSet<string>((safeBins ?? []).Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)), StringComparer.OrdinalIgnoreCase);
+        _approvalManager = approvalManager;
     }
 
     public override string Name => "exec";
@@ -69,6 +89,11 @@ public sealed class ExecTool : ToolBase
 
         var guardError = GuardCommand(command, workingDir);
         if (guardError != null) return guardError;
+
+        // Policy gate: security/allowlist/approval.
+        var policyResult = await EnforceApprovalPolicyAsync(command, workingDir);
+        if (policyResult is not null)
+            return policyResult;
 
         // ── Explicit background ────────────────────────────────────
         if (background && _processManager != null)
@@ -186,6 +211,193 @@ public sealed class ExecTool : ToolBase
         if (result.Length > maxLen)
             result = result[..maxLen] + $"\n... (truncated, {result.Length - maxLen} more chars)";
         return result;
+    }
+
+    private async Task<string?> EnforceApprovalPolicyAsync(string command, string workingDir)
+    {
+        if (_security == "full")
+            return null;
+
+        if (_security == "deny")
+            return "Error: Command blocked by exec policy (security=deny).";
+
+        var hasShellChaining = ContainsShellControlOperators(command);
+        var executable = ResolveExecutable(command, workingDir);
+        var allowlistSatisfied = executable.ResolvedPath != null &&
+                                 _approvalManager?.IsAllowlisted(executable.ResolvedPath) == true;
+        var safeBinSatisfied = IsSafeBinUsage(command, executable.Name);
+        var policySatisfied = allowlistSatisfied || safeBinSatisfied;
+
+        var needsApproval = _ask == "always" || (_ask == "on-miss" && !policySatisfied);
+        if (!needsApproval)
+            return policySatisfied ? null : "Error: Command blocked by exec policy (allowlist miss).";
+
+        if (_approvalManager == null)
+            return ApplyFallbackPolicy(policySatisfied, "approval system unavailable");
+
+        if (hasShellChaining && _security == "allowlist")
+        {
+            // Keep allowlist mode strict against shell composition bypasses.
+            return "Error: Command blocked by exec policy (unsupported shell control operators in allowlist mode).";
+        }
+
+        var timeout = TimeSpan.FromSeconds(_approvalTimeoutSec);
+        var id = _approvalManager.CreateRequest(
+            command: command,
+            workingDirectory: workingDir,
+            security: _security,
+            ask: _ask,
+            resolvedExecutablePath: executable.ResolvedPath,
+            timeout: timeout);
+
+        var decision = await _approvalManager.WaitForDecisionAsync(id);
+        if (decision is null)
+            return ApplyFallbackPolicy(policySatisfied, $"approval timeout ({_approvalTimeoutSec}s)");
+
+        if (decision == ExecApprovalDecision.Deny)
+            return $"Error: Command denied by operator approval ({id[..8]}).";
+
+        if (decision == ExecApprovalDecision.AllowAlways && !string.IsNullOrEmpty(executable.ResolvedPath))
+            _approvalManager.AddAllowlist(executable.ResolvedPath);
+
+        return null;
+    }
+
+    private string? ApplyFallbackPolicy(bool allowlistSatisfied, string reason)
+    {
+        if (_askFallback == "full")
+            return null;
+
+        if (_askFallback == "allowlist" && allowlistSatisfied)
+            return null;
+
+        return $"Error: Command blocked by exec approval fallback ({reason}, ask_fallback={_askFallback}).";
+    }
+
+    private static string NormalizeSecurity(string value)
+    {
+        var v = value.Trim().ToLowerInvariant();
+        return v is "deny" or "allowlist" or "full" ? v : "allowlist";
+    }
+
+    private static string NormalizeAsk(string value)
+    {
+        var v = value.Trim().ToLowerInvariant();
+        return v is "off" or "on-miss" or "always" ? v : "on-miss";
+    }
+
+    private static bool ContainsShellControlOperators(string command)
+    {
+        // Conservative gate for allowlist mode.
+        var controls = new[] { "&&", "||", ";", "|", ">", "<", "$(", "`" };
+        return controls.Any(command.Contains);
+    }
+
+    private bool IsSafeBinUsage(string command, string? executableName)
+    {
+        if (string.IsNullOrEmpty(executableName))
+            return false;
+        if (!_safeBins.Contains(executableName))
+            return false;
+
+        var tokens = Tokenize(command);
+        if (tokens.Count <= 1)
+            return true;
+
+        foreach (var token in tokens.Skip(1))
+        {
+            if (token == "-")
+                continue;
+            if (token.StartsWith('-'))
+                continue;
+            if (LooksLikePath(token))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikePath(string token)
+    {
+        if (token.StartsWith("./") || token.StartsWith("../") || token.StartsWith("~/") || token.StartsWith('/'))
+            return true;
+        return Regex.IsMatch(token, @"^[A-Za-z]:[\\/]");
+    }
+
+    private static List<string> Tokenize(string command)
+    {
+        var tokens = new List<string>();
+        var current = "";
+        var inSingle = false;
+        var inDouble = false;
+
+        foreach (var ch in command)
+        {
+            if (ch == '\'' && !inDouble)
+            {
+                inSingle = !inSingle;
+                continue;
+            }
+
+            if (ch == '"' && !inSingle)
+            {
+                inDouble = !inDouble;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(ch) && !inSingle && !inDouble)
+            {
+                if (!string.IsNullOrEmpty(current))
+                {
+                    tokens.Add(current);
+                    current = "";
+                }
+                continue;
+            }
+
+            current += ch;
+        }
+
+        if (!string.IsNullOrEmpty(current))
+            tokens.Add(current);
+
+        return tokens;
+    }
+
+    private static (string? Name, string? ResolvedPath) ResolveExecutable(string command, string workingDir)
+    {
+        var tokens = Tokenize(command);
+        if (tokens.Count == 0)
+            return (null, null);
+
+        var raw = tokens[0];
+        if (string.IsNullOrWhiteSpace(raw))
+            return (null, null);
+
+        if (Path.IsPathRooted(raw) || raw.Contains('/') || raw.Contains('\\'))
+        {
+            var full = Path.GetFullPath(Path.IsPathRooted(raw) ? raw : Path.Combine(workingDir, raw));
+            var name = Path.GetFileNameWithoutExtension(full);
+            return (name, File.Exists(full) ? full : full);
+        }
+
+        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var exts = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT;.COM")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries)
+            : [""];
+
+        foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var ext in exts)
+            {
+                var candidate = Path.Combine(dir, raw + (ext.StartsWith('.') || string.IsNullOrEmpty(ext) ? ext : "." + ext));
+                if (File.Exists(candidate))
+                    return (Path.GetFileNameWithoutExtension(candidate), candidate);
+            }
+        }
+
+        return (raw, null);
     }
 
     private string? GuardCommand(string command, string cwd)

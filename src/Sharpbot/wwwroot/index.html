@@ -158,11 +158,65 @@
                                 <input type="number" id="setting-exec-timeout" placeholder="60">
                             </div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-exec-security">Exec Security</label>
+                                <select id="setting-exec-security">
+                                    <option value="deny">deny (block all exec)</option>
+                                    <option value="allowlist">allowlist</option>
+                                    <option value="full">full (allow all)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-exec-ask">Exec Ask</label>
+                                <select id="setting-exec-ask">
+                                    <option value="off">off</option>
+                                    <option value="on-miss">on-miss</option>
+                                    <option value="always">always</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-exec-ask-fallback">Ask Fallback</label>
+                                <select id="setting-exec-ask-fallback">
+                                    <option value="deny">deny</option>
+                                    <option value="allowlist">allowlist</option>
+                                    <option value="full">full</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-exec-approval-timeout">Approval Timeout (seconds)</label>
+                                <input type="number" id="setting-exec-approval-timeout" placeholder="120">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-exec-safe-bins">Safe Bins (comma-separated)</label>
+                                <input type="text" id="setting-exec-safe-bins" placeholder="jq, grep, cut, sort, uniq, head, tail, tr, wc">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-exec-allowlist">Exec Allowlist (one path or glob per line)</label>
+                            <textarea id="setting-exec-allowlist" rows="4" placeholder="/usr/bin/rg&#10;C:\Tools\*.exe"></textarea>
+                            <div class="section-hint">These entries are saved to config and applied on restart.</div>
+                        </div>
                         <div class="form-group">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="setting-restrict-workspace">
                                 Restrict file/exec tools to workspace directory
                             </label>
+                        </div>
+                    </div>
+
+                    <!-- Exec Approvals Queue -->
+                    <div class="settings-section">
+                        <h3>Exec Approvals</h3>
+                        <p class="section-hint">Review pending command approvals and allow once, allow always, or deny.</p>
+                        <div class="settings-actions" style="padding-top:0;">
+                            <button class="btn btn-ghost btn-sm" id="refresh-exec-approvals-btn">Refresh Approvals</button>
+                            <span id="exec-approvals-status" class="save-status"></span>
+                        </div>
+                        <div id="exec-approvals-list" class="exec-approvals-list">
+                            <div class="empty-state">No pending approvals.</div>
                         </div>
                     </div>
 
@@ -370,6 +424,6 @@
         </main>
     </div>
 
-    <script src="/js/app.js?v=2"></script>
+    <script src="/js/app.js?v=3"></script>
 </body>
 </html>

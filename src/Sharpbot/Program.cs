@@ -4,6 +4,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Sharpbot;
+using Sharpbot.Agent;
 using Sharpbot.Api;
 using Sharpbot.Bus;
 using Sharpbot.Commands;
@@ -72,6 +73,8 @@ builder.Services.AddSingleton<SessionManager>(sp =>
 builder.Services.AddSingleton<CronService>(sp =>
     new CronService(db, sp.GetRequiredService<ILoggerFactory>().CreateLogger("cron")));
 
+builder.Services.AddSingleton(sp => new ExecApprovalManager(sharpbotConfig.Tools.Exec));
+
 // ── Logging configuration ────────────────────────────────────────────────────
 // Suppress noisy ASP.NET Core HTTP request/response logs from all providers
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
@@ -102,15 +105,12 @@ builder.Services.AddOpenTelemetry()
             // Filter out noisy polling endpoints from traces
             opts.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/api/logs");
         })
-        .AddHttpClientInstrumentation()
-        .AddConsoleExporter())
+        .AddHttpClientInstrumentation())
     .WithMetrics(metrics => metrics
         .AddMeter(SharpbotInstrumentation.ServiceName)
         .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddConsoleExporter())
-    .WithLogging(logging => logging
-        .AddConsoleExporter());
+        .AddHttpClientInstrumentation())
+    .WithLogging(_ => { });
 
 // ── Usage tracking ──────────────────────────────────────────────────────────
 var usageStore = new UsageStore(db);
@@ -148,6 +148,7 @@ app.MapSkillsApi();
 app.MapLogsApi();
 app.MapUsageApi();
 app.MapMemoryApi();
+app.MapExecApprovalsApi();
 app.MapSlackEventsApi();
 
 // ── Root redirect ───────────────────────────────────────────────────────────

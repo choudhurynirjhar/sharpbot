@@ -373,7 +373,24 @@ internal sealed class RingBufferLogger : ILogger
         if (!IsEnabled(logLevel)) return;
 
         var message = formatter(state, exception);
+        if (!ShouldCapture(_category, message, logLevel)) return;
         _buffer.Add(logLevel, _category, message, exception?.ToString());
+    }
+
+    private static bool ShouldCapture(string category, string message, LogLevel level)
+    {
+        // Keep only agent-focused logs in the web UI log buffer.
+        var isAgentCategory = category.Equals("agent", StringComparison.OrdinalIgnoreCase) ||
+                              category.Contains("Agent", StringComparison.OrdinalIgnoreCase);
+        if (!isAgentCategory) return false;
+
+        // Always keep warnings/errors from the agent category.
+        if (level >= LogLevel.Warning) return true;
+
+        // Drop aggregate telemetry noise; keep concrete request/tool/skill flow logs.
+        if (message.Contains("Agent telemetry", StringComparison.OrdinalIgnoreCase)) return false;
+
+        return true;
     }
 
     /// <summary>Shorten category names like "Microsoft.Hosting.Lifetime" to "Hosting.Lifetime".</summary>

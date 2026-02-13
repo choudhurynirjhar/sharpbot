@@ -22,6 +22,8 @@ public static class LogsApi
         int limit = 200,
         long? afterId = null)
     {
+        category ??= "agent";
+
         LogLevel? minLevel = level?.ToLowerInvariant() switch
         {
             "trace" => LogLevel.Trace,

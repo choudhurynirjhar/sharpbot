@@ -61,7 +61,16 @@ public static class ConfigApi
                         maxResults = config.Tools.Web.Search.MaxResults,
                     }
                 },
-                exec = new { timeout = config.Tools.Exec.Timeout },
+                exec = new
+                {
+                    timeout = config.Tools.Exec.Timeout,
+                    security = config.Tools.Exec.Security,
+                    ask = config.Tools.Exec.Ask,
+                    askFallback = config.Tools.Exec.AskFallback,
+                    approvalTimeoutSec = config.Tools.Exec.ApprovalTimeoutSec,
+                    safeBins = config.Tools.Exec.SafeBins,
+                    allowlist = config.Tools.Exec.Allowlist,
+                },
                 restrictToWorkspace = config.Tools.RestrictToWorkspace,
             },
             gateway = new { host = config.Gateway.Host, port = config.Gateway.Port },

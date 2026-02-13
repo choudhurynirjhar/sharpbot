@@ -46,6 +46,7 @@ public sealed class AgentLoop : IDisposable
     private readonly BrowserManager _browserManager;
     private readonly ContextCompactor _compactor;
     private readonly ProcessSessionManager _processManager;
+    private readonly ExecApprovalManager? _execApprovals;
     private readonly SemanticMemoryStore? _semanticMemory;
     private readonly PluginLoader? _pluginLoader;
     private readonly List<IPluginHook> _pluginHooks = [];
@@ -109,6 +110,7 @@ public sealed class AgentLoop : IDisposable
             sessionCleanupMs: _execConfig.SessionCleanupMs,
             defaultWorkDir: _workspace,
             logger: logger);
+        _execApprovals = options.ExecApprovalManager;
         _pluginLoader = options.PluginLoader;
 
         RegisterDefaultTools();
@@ -128,7 +130,13 @@ public sealed class AgentLoop : IDisposable
             defaultYieldMs: _execConfig.BackgroundYieldMs,
             workingDir: _workspace,
             restrictToWorkspace: _restrictToWorkspace,
-            processManager: _processManager));
+            processManager: _processManager,
+            security: _execConfig.Security,
+            ask: _execConfig.Ask,
+            askFallback: _execConfig.AskFallback,
+            approvalTimeoutSec: _execConfig.ApprovalTimeoutSec,
+            safeBins: _execConfig.SafeBins,
+            approvalManager: _execApprovals));
         _tools.Register(new ProcessTool(_processManager));
 
         _tools.Register(new WebSearchTool(_braveApiKey));
@@ -792,6 +800,19 @@ public sealed class AgentLoop : IDisposable
                 yield break;
             }
 
+            _logger?.LogInformation(
+                "┌─ LLM Stream Response (iteration {Iteration}, {Duration}) ─\n" +
+                "│ Finish: {FinishReason} | Tokens: {Prompt}→{Completion} ({Total} total)\n" +
+                "│ Tool calls: {ToolCallCount}\n" +
+                "└───────────────────────────────────────────────────────",
+                iteration + 1,
+                FormatDuration(llmSw.Elapsed),
+                llmResponse.FinishReason,
+                llmResponse.Usage.GetValueOrDefault("prompt_tokens"),
+                llmResponse.Usage.GetValueOrDefault("completion_tokens"),
+                llmResponse.Usage.GetValueOrDefault("total_tokens"),
+                llmResponse.ToolCalls.Count);
+
             // Record OTel metrics
             SharpbotInstrumentation.LlmDuration.Record(llmSw.Elapsed.TotalMilliseconds,
                 new KeyValuePair<string, object?>("model", _model));
@@ -835,6 +856,14 @@ public sealed class AgentLoop : IDisposable
             foreach (var toolCall in llmResponse.ToolCalls)
             {
                 ct.ThrowIfCancellationRequested();
+
+                var argsStr = JsonSerializer.Serialize(toolCall.Arguments);
+                _logger?.LogInformation(
+                    "┌─ Tool Request: {Name} ─────────────────────────────\n" +
+                    "│ Call ID: {CallId}\n" +
+                    "│ Args: {Args}\n" +
+                    "└───────────────────────────────────────────────────────",
+                    toolCall.Name, toolCall.Id, Truncate(argsStr, 1000));
 
                 yield return AgentStreamEvent.ToolStart(toolCall.Name, toolCall.Id);
 
@@ -888,6 +917,17 @@ public sealed class AgentLoop : IDisposable
                     ResultLength = result.Length,
                 });
 
+                _logger?.LogInformation(
+                    "┌─ Tool Response: {Name} ({Duration}) ──────────────────\n" +
+                    "│ Status: {Status}\n" +
+                    "│ Result ({Length} chars): {Result}\n" +
+                    "└───────────────────────────────────────────────────────",
+                    toolCall.Name,
+                    FormatDuration(toolSw.Elapsed),
+                    success ? "✓ OK" : $"✗ Error: {error}",
+                    result.Length,
+                    Truncate(result, 1000));
+
                 yield return AgentStreamEvent.ToolEnd(
                     toolCall.Name, toolCall.Id, success,
                     (int)toolSw.Elapsed.TotalMilliseconds, error, result.Length);
@@ -907,6 +947,9 @@ public sealed class AgentLoop : IDisposable
         string chatId = Channels.WellKnown.Direct,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        var incomingPreview = content.Length > 80 ? content[..80] + "..." : content;
+        _logger?.LogInformation("Processing message from {Channel}:{ChatId}: {Preview}", channel, chatId, incomingPreview);
+
         var msg = new InboundMessage
         {
             Channel = channel,
@@ -956,6 +999,8 @@ public sealed class AgentLoop : IDisposable
 
             // Save to session
             var finalContent = fullContent.Length > 0 ? fullContent.ToString() : "I've completed processing but have no response to give.";
+            var responsePreview = finalContent.Length > 120 ? finalContent[..120] + "..." : finalContent;
+            _logger?.LogInformation("Response to {Channel}:{ChatId}: {Preview}", channel, chatId, responsePreview);
             session.AddMessage(MessageRoles.User, msg.Content);
             session.AddMessage(MessageRoles.Assistant, finalContent);
             _sessions.Save(session);

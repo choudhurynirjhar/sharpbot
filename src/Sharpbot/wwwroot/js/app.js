@@ -15,6 +15,8 @@ const API = {
     logs: '/api/logs',
     usage: '/api/usage',
     usageHistory: '/api/usage/history',
+    execApprovalsPending: '/api/exec/approvals/pending',
+    execApprovalsResolve: '/api/exec/approvals',
 };
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -1055,6 +1057,7 @@ function initSettings() {
     // Save button
     document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
     document.getElementById('reload-settings-btn').addEventListener('click', loadSettings);
+    document.getElementById('refresh-exec-approvals-btn')?.addEventListener('click', loadExecApprovals);
 }
 
 async function loadSettings() {
@@ -1094,7 +1097,14 @@ async function loadSettings() {
             }
         }
         document.getElementById('setting-exec-timeout').value = config.tools?.exec?.timeout || 60;
+        document.getElementById('setting-exec-security').value = config.tools?.exec?.security || 'allowlist';
+        document.getElementById('setting-exec-ask').value = config.tools?.exec?.ask || 'on-miss';
+        document.getElementById('setting-exec-ask-fallback').value = config.tools?.exec?.askFallback || 'deny';
+        document.getElementById('setting-exec-approval-timeout').value = config.tools?.exec?.approvalTimeoutSec || 120;
+        document.getElementById('setting-exec-safe-bins').value = (config.tools?.exec?.safeBins || []).join(', ');
+        document.getElementById('setting-exec-allowlist').value = (config.tools?.exec?.allowlist || []).join('\n');
         document.getElementById('setting-restrict-workspace').checked = config.tools?.restrictToWorkspace || false;
+        await loadExecApprovals();
 
     } catch (err) {
         showToast('Failed to load settings');
@@ -1136,6 +1146,18 @@ async function saveSettings() {
         // Tools (non-secret settings only)
         const execTimeout = parseInt(document.getElementById('setting-exec-timeout').value);
         if (!isNaN(execTimeout)) update.Tools.Exec.Timeout = execTimeout;
+        update.Tools.Exec.Security = document.getElementById('setting-exec-security').value;
+        update.Tools.Exec.Ask = document.getElementById('setting-exec-ask').value;
+        update.Tools.Exec.AskFallback = document.getElementById('setting-exec-ask-fallback').value;
+
+        const approvalTimeout = parseInt(document.getElementById('setting-exec-approval-timeout').value);
+        if (!isNaN(approvalTimeout)) update.Tools.Exec.ApprovalTimeoutSec = approvalTimeout;
+
+        const safeBinsRaw = document.getElementById('setting-exec-safe-bins').value || '';
+        update.Tools.Exec.SafeBins = parseCsvList(safeBinsRaw);
+
+        const allowlistRaw = document.getElementById('setting-exec-allowlist').value || '';
+        update.Tools.Exec.Allowlist = parseLineList(allowlistRaw);
 
         update.Tools.RestrictToWorkspace = document.getElementById('setting-restrict-workspace').checked;
 
@@ -1163,6 +1185,87 @@ async function saveSettings() {
     // Clear status after 5 seconds
     setTimeout(() => { statusEl.textContent = ''; }, 5000);
 }
+
+function parseCsvList(raw) {
+    return (raw || '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+}
+
+function parseLineList(raw) {
+    return (raw || '')
+        .split(/\r?\n/)
+        .map(x => x.trim())
+        .filter(Boolean);
+}
+
+async function loadExecApprovals() {
+    const list = document.getElementById('exec-approvals-list');
+    const status = document.getElementById('exec-approvals-status');
+    if (!list) return;
+
+    try {
+        const response = await fetch(API.execApprovalsPending);
+        const data = await response.json();
+        const pending = data.pending || [];
+
+        if (status) {
+            status.textContent = pending.length > 0 ? `${pending.length} pending` : 'No pending approvals';
+            status.style.color = pending.length > 0 ? 'var(--warning)' : 'var(--text-secondary)';
+        }
+
+        if (pending.length === 0) {
+            list.innerHTML = '<div class="empty-state">No pending approvals.</div>';
+            return;
+        }
+
+        list.innerHTML = pending.map(item => `
+            <div class="exec-approval-card">
+                <div class="exec-approval-header">
+                    <span class="exec-approval-id">${escapeHtml(item.id.slice(0, 8))}</span>
+                    <span class="badge badge-warning">Pending</span>
+                </div>
+                <div class="exec-approval-command"><code>${escapeHtml(item.command)}</code></div>
+                <div class="exec-approval-meta">
+                    <span>Security: ${escapeHtml(item.security || '-')}</span>
+                    <span>Ask: ${escapeHtml(item.ask || '-')}</span>
+                    <span>Expires: ${new Date(item.expiresAtUtc).toLocaleTimeString()}</span>
+                </div>
+                <div class="exec-approval-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="resolveExecApproval('${escapeHtml(item.id)}','allow-once')">Allow Once</button>
+                    <button class="btn btn-primary btn-sm" onclick="resolveExecApproval('${escapeHtml(item.id)}','allow-always')">Allow Always</button>
+                    <button class="btn btn-danger btn-sm" onclick="resolveExecApproval('${escapeHtml(item.id)}','deny')">Deny</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        if (status) {
+            status.textContent = 'Failed to load approvals';
+            status.style.color = 'var(--error)';
+        }
+        list.innerHTML = '<div class="empty-state">Failed to load pending approvals.</div>';
+    }
+}
+
+window.resolveExecApproval = async function(id, decision) {
+    try {
+        const response = await fetch(`${API.execApprovalsResolve}/${encodeURIComponent(id)}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision }),
+        });
+        const result = await response.json();
+        if (!response.ok || result.error) {
+            showToast(result.message || 'Failed to resolve approval');
+            return;
+        }
+        showToast(`Approval ${decision}`);
+        await loadExecApprovals();
+    } catch (err) {
+        showToast(`Failed to resolve approval: ${err.message}`);
+    }
+};
 
 // ============================================================================
 // Cron Jobs
